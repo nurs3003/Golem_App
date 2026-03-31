@@ -1,0 +1,611 @@
+---
+title: "Market Dynamics Explorer — Under the Hood"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    self-contained: true
+execute:
+  warning: false
+  message: false
+---
+
+This document mirrors every computation the Shiny app performs, but runs
+them statically so you can inspect the data and charts step by step.
+
+---
+
+## 1. Setup
+
+```{r}
+library(RTL)
+library(tidyquant)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(slider)
+library(plotly)
+library(broom)
+```
+
+---
+
+## 2. Data Loading
+
+### 2.1 RTL Futures Data (`fct_load_futures_data`)
+
+`RTL::dflong` stores continuous futures contracts in long format.
+The `series` column encodes market + contract number as a single string
+(e.g. `"CL01"` = WTI crude, front month).  We split it into two columns.
+
+```{r}
+futures_raw <- RTL::dflong
+
+# Parse "TICKERNN" into separate market and contract columns
+# sub("[0-9]+$", ...) strips trailing digits  → market code
+# sub("^[A-Za-z]+", ...) strips leading letters → contract number
+futures <- futures_raw |>
+  mutate(
+    market   = sub("[0-9]+$", "", series),
+    contract = as.integer(sub("^[A-Za-z]+", "", series)),
+    date     = as.Date(date)
+  ) |>
+  filter(!is.na(value), !is.na(contract)) |>
+  select(date, market, contract, value)
+
+# Confirm what we have
+cat("Date range:", format(min(futures$date)), "→", format(max(futures$date)), "\n")
+cat("Markets:   ", paste(unique(futures$market), collapse = ", "), "\n")
+cat("Rows:      ", nrow(futures), "\n")
+```
+
+```{r}
+# Quick look at one market
+futures |>
+  filter(market == "CL", date == max(date)) |>
+  arrange(contract)
+```
+
+### 2.2 FRED Constant Maturity Treasury Data (`fct_load_cmt_data`)
+
+We pull 11 maturities (1 month → 30 years) from FRED.
+`tidyquant::tq_get()` does not require an API key for FRED economic data.
+
+```{r}
+cmt_meta <- tibble(
+  ticker         = c("DGS1MO","DGS3MO","DGS6MO",
+                     "DGS1","DGS2","DGS3","DGS5",
+                     "DGS7","DGS10","DGS20","DGS30"),
+  maturity_years = c(1/12, 3/12, 6/12, 1, 2, 3, 5, 7, 10, 20, 30)
+)
+
+cmt <- lapply(seq_len(nrow(cmt_meta)), function(i) {
+  tq_get(cmt_meta$ticker[i], get = "economic.data") |>
+    rename(value = price) |>
+    mutate(
+      maturity_label = cmt_meta$ticker[i],
+      maturity_years = cmt_meta$maturity_years[i],
+      date           = as.Date(date)
+    ) |>
+    select(date, maturity_label, maturity_years, value)
+}) |>
+  bind_rows() |>
+  filter(!is.na(value))
+
+cat("CMT date range:", format(min(cmt$date)), "→", format(max(cmt$date)), "\n")
+cat("Maturities:    ", paste(unique(cmt$maturity_label), collapse = ", "), "\n")
+```
+
+---
+
+## 3. Forward Curve
+
+The forward curve shows the **term structure of prices** at a point in time:
+how does the market price contracts expiring 1 month, 2 months, ... N months
+out?  Backwardation (downward slope) signals tight near-term supply.
+Contango (upward slope) reflects storage costs and expectations of future
+surplus.
+
+### 3.1 Commodity Forward Curves — Multi-date Overlay
+
+We pick three snapshot dates spaced one year apart to show how the curve
+shape has evolved.
+
+```{r}
+snapshot_dates <- as.Date(c("2019-01-02", "2022-01-03", "2025-01-02"))
+markets_to_show <- c("CL", "BRN", "NG")
+
+# For each market × date, find the closest available trading date ≤ snapshot
+get_curve <- function(data, mkt, snap_date) {
+  data |>
+    filter(market == mkt, date <= snap_date) |>
+    filter(date == max(date)) |>
+    arrange(contract) |>
+    mutate(snapshot = snap_date)
+}
+
+curve_df <- bind_rows(lapply(markets_to_show, function(mkt) {
+  bind_rows(lapply(snapshot_dates, function(d) get_curve(futures, mkt, d)))
+}))
+
+# Opacity ramp: oldest = most transparent
+opacities <- c(0.35, 0.65, 1.0)
+
+p_curve <- plot_ly()
+for (mkt in markets_to_show) {
+  for (i in seq_along(snapshot_dates)) {
+    sub_df <- filter(curve_df, market == mkt, snapshot == snapshot_dates[i])
+    if (nrow(sub_df) == 0) next
+    p_curve <- add_trace(
+      p_curve,
+      data          = sub_df,
+      x             = ~contract,
+      y             = ~value,
+      type          = "scatter",
+      mode          = "lines+markers",
+      opacity       = opacities[i],
+      name          = paste0(mkt, " (", format(snapshot_dates[i], "%Y-%m-%d"), ")"),
+      hovertemplate = paste0(mkt, " C%{x}<br>$%{y:.2f}<extra></extra>")
+    )
+  }
+}
+p_curve |>
+  layout(
+    title     = "Energy Futures Forward Curves",
+    xaxis     = list(title = "Contract #"),
+    yaxis     = list(title = "Price (USD)"),
+    hovermode = "x unified",
+    legend    = list(orientation = "h", y = -0.25)
+  )
+```
+
+### 3.2 US Treasury Yield Curve — Multi-date Overlay
+
+Same idea applied to interest rates.  A flat or inverted yield curve
+(short rates ≥ long rates) is a classic recession signal.
+
+```{r}
+get_yield_curve <- function(snap_date) {
+  cmt |>
+    filter(date <= snap_date) |>
+    filter(date == max(date)) |>
+    arrange(maturity_years) |>
+    mutate(snapshot = snap_date)
+}
+
+yc_df <- bind_rows(lapply(snapshot_dates, get_yield_curve))
+
+p_yc <- plot_ly()
+for (i in seq_along(snapshot_dates)) {
+  sub_df <- filter(yc_df, snapshot == snapshot_dates[i])
+  p_yc <- add_trace(
+    p_yc,
+    data          = sub_df,
+    x             = ~maturity_years,
+    y             = ~value,
+    type          = "scatter",
+    mode          = "lines+markers",
+    opacity       = opacities[i],
+    name          = format(snapshot_dates[i], "%Y-%m-%d"),
+    hovertemplate = "%{x:.1f}y: %{y:.2f}%<extra></extra>"
+  )
+}
+p_yc |>
+  layout(
+    title     = "US Constant Maturity Treasury Yield Curves",
+    xaxis     = list(title = "Maturity (years)"),
+    yaxis     = list(title = "Yield (%)"),
+    hovermode = "x unified",
+    legend    = list(orientation = "h", y = -0.25)
+  )
+```
+
+---
+
+## 4. Volatility
+
+### 4.1 Rolling Realised Volatility — Front Month
+
+We compute log returns then apply a rolling standard deviation, annualised
+by multiplying by √252 (trading days per year).  High-vol regimes correspond
+to geopolitical events, supply shocks, and demand crises.
+
+```{r}
+# Rolling annualised vol of front-month (contract = 1) log returns
+window_days <- 21  # ~1 trading month
+
+front_vol <- futures |>
+  filter(contract == 1) |>
+  arrange(market, date) |>
+  group_by(market) |>
+  mutate(
+    log_ret  = c(NA_real_, diff(log(value))),
+    roll_vol = slide_dbl(
+      log_ret,
+      ~ sd(.x, na.rm = TRUE) * sqrt(252),
+      .before   = window_days - 1L,
+      .complete = TRUE
+    )
+  ) |>
+  ungroup() |>
+  filter(!is.na(roll_vol))
+
+p_vol <- plot_ly()
+for (mkt in unique(front_vol$market)) {
+  sub_df <- filter(front_vol, market == mkt)
+  p_vol <- add_trace(
+    p_vol,
+    data          = sub_df,
+    x             = ~date,
+    y             = ~roll_vol,
+    type          = "scatter",
+    mode          = "lines",
+    name          = mkt,
+    hovertemplate = "%{x|%Y-%m-%d}<br>Vol: %{y:.1%}<extra></extra>"
+  )
+}
+p_vol |>
+  layout(
+    title     = paste0(window_days, "-Day Rolling Annualised Volatility (Front Month)"),
+    xaxis     = list(title = "Date"),
+    yaxis     = list(title = "Annualised Vol", tickformat = ".0%"),
+    hovermode = "x unified",
+    legend    = list(orientation = "h", y = -0.25)
+  )
+```
+
+### 4.2 Volatility Surface — CL Term Structure
+
+For a single market we compute vol for every contract, then display it as a
+heatmap: time on x, contract number on y, colour = vol level.  This reveals
+whether near-term or far-term contracts are more volatile (usually near-term),
+and whether vol is elevated across the whole curve or concentrated.
+
+```{r}
+surface_market <- "CL"
+
+cl_surface <- futures |>
+  filter(market == surface_market) |>
+  arrange(contract, date) |>
+  group_by(contract) |>
+  mutate(
+    log_ret  = c(NA_real_, diff(log(value))),
+    roll_vol = slide_dbl(
+      log_ret,
+      ~ sd(.x, na.rm = TRUE) * sqrt(252),
+      .before   = window_days - 1L,
+      .complete = TRUE
+    )
+  ) |>
+  ungroup() |>
+  filter(!is.na(roll_vol)) |>
+  # Keep Mondays only to reduce matrix size for display
+  filter(wday(date) == 2L)
+
+wide_surface <- cl_surface |>
+  pivot_wider(id_cols = date, names_from = contract, values_from = roll_vol)
+
+mat       <- as.matrix(wide_surface[, -1])
+dates_vec <- wide_surface$date
+contracts_vec <- as.integer(colnames(wide_surface)[-1])
+
+plot_ly(
+  x             = dates_vec,
+  y             = contracts_vec,
+  z             = t(mat),
+  type          = "heatmap",
+  colorscale    = "RdYlGn",
+  reversescale  = TRUE,
+  hovertemplate = "Date: %{x|%Y-%m-%d}<br>Contract: %{y}<br>Vol: %{z:.1%}<extra></extra>"
+) |>
+  layout(
+    title = paste0(surface_market, " Volatility Surface (", window_days, "-day rolling)"),
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "Contract #")
+  )
+```
+
+---
+
+## 5. Co-Dynamics
+
+### 5.1 Correlation Matrix Snapshot
+
+Correlation is computed on log returns of front-month prices.
+A high WTI/Brent correlation is expected; understanding when it breaks down
+(e.g. US export ban, regional supply disruptions) tells you about
+market segmentation.
+
+```{r}
+corr_window   <- 63   # ~1 quarter of trading days
+corr_snap     <- as.Date("2025-01-02")
+corr_markets  <- c("CL", "BRN", "NG", "HO", "RB")
+
+# Wide returns matrix
+wide_ret <- futures |>
+  filter(market %in% corr_markets, contract == 1) |>
+  arrange(market, date) |>
+  group_by(market) |>
+  mutate(log_ret = c(NA_real_, diff(log(value)))) |>
+  ungroup() |>
+  filter(!is.na(log_ret)) |>
+  pivot_wider(id_cols = date, names_from = market, values_from = log_ret) |>
+  arrange(date)
+
+# Slice the window ending at the snapshot date
+window_data <- wide_ret |>
+  filter(date <= corr_snap) |>
+  tail(corr_window)
+
+corr_mat <- cor(window_data[, -1], use = "pairwise.complete.obs")
+
+plot_ly(
+  x             = colnames(corr_mat),
+  y             = colnames(corr_mat),
+  z             = corr_mat,
+  type          = "heatmap",
+  colorscale    = "RdBu",
+  reversescale  = TRUE,
+  zmid = 0, zmin = -1, zmax = 1,
+  hovertemplate = "%{x} vs %{y}<br>Corr: %{z:.2f}<extra></extra>"
+) |>
+  layout(
+    title = paste0("Correlation Matrix — ", corr_window,
+                   "-day window ending ", format(corr_snap)),
+    xaxis = list(title = ""),
+    yaxis = list(title = "", autorange = "reversed")
+  )
+```
+
+### 5.2 Rolling Pairwise Correlation
+
+The rolling correlation between two markets reveals structural changes:
+e.g. WTI and Brent were nearly perfectly correlated before the US lifted
+its crude export ban in 2015; the relationship shifted afterwards.
+
+```{r}
+market_a <- "CL"
+market_b <- "BRN"
+
+pair_data <- wide_ret |>
+  select(date, all_of(c(market_a, market_b))) |>
+  rename(col_a = all_of(market_a), col_b = all_of(market_b)) |>
+  filter(!is.na(col_a), !is.na(col_b)) |>
+  mutate(
+    roll_corr = slide2_dbl(
+      col_a, col_b,
+      function(.x, .y) {
+        if (length(.x) < 10L) return(NA_real_)
+        cor(.x, .y, use = "complete.obs")
+      },
+      .before   = corr_window - 1L,
+      .complete = TRUE
+    )
+  ) |>
+  filter(!is.na(roll_corr))
+
+plot_ly(data = pair_data, x = ~date, y = ~roll_corr,
+        type = "scatter", mode = "lines",
+        line = list(color = "#2980b9"),
+        hovertemplate = "%{x|%Y-%m-%d}<br>Corr: %{y:.2f}<extra></extra>") |>
+  layout(
+    title  = paste0(market_a, " vs ", market_b,
+                    " — ", corr_window, "-day rolling correlation"),
+    xaxis  = list(title = "Date"),
+    yaxis  = list(title = "Correlation", range = c(-1, 1))
+  )
+```
+
+---
+
+## 6. Seasonality
+
+Energy markets have well-known seasonal patterns driven by demand cycles:
+natural gas spikes in winter (heating) and summer (cooling); heating oil
+draws in autumn as inventories are built before winter; refined products
+tend to rally ahead of the summer driving season.
+
+### 6.1 Average Monthly Log Return
+
+```{r}
+month_labels <- c("Jan","Feb","Mar","Apr","May","Jun",
+                  "Jul","Aug","Sep","Oct","Nov","Dec")
+
+seasonal_markets <- c("CL", "NG", "HO", "RB")
+
+monthly_avg <- futures |>
+  filter(market %in% seasonal_markets, contract == 1) |>
+  arrange(market, date) |>
+  group_by(market) |>
+  mutate(log_ret = c(NA_real_, diff(log(value)))) |>
+  ungroup() |>
+  filter(!is.na(log_ret)) |>
+  mutate(month = month(date)) |>
+  group_by(market, month) |>
+  summarise(avg_ret = mean(log_ret, na.rm = TRUE), .groups = "drop") |>
+  mutate(month_lbl = month_labels[month])
+
+p_seas <- plot_ly()
+for (mkt in seasonal_markets) {
+  sub_df <- filter(monthly_avg, market == mkt) |> arrange(month)
+  p_seas <- add_trace(
+    p_seas,
+    data          = sub_df,
+    x             = ~month_lbl,
+    y             = ~avg_ret,
+    type          = "bar",
+    name          = mkt,
+    hovertemplate = "%{x}: %{y:.2%}<extra></extra>"
+  )
+}
+p_seas |>
+  layout(
+    barmode   = "group",
+    title     = "Average Monthly Log Return — Front Month (2007–present)",
+    xaxis     = list(title = "Month", categoryorder = "array",
+                     categoryarray = month_labels),
+    yaxis     = list(title = "Avg. Log Return", tickformat = ".1%"),
+    legend    = list(orientation = "h", y = -0.25)
+  )
+```
+
+### 6.2 Monthly Return Distribution (Box Plot)
+
+Box plots show not just the average but the full distribution — important
+for communicating tail risk to a risk management audience.
+
+```{r}
+monthly_rets <- futures |>
+  filter(market %in% seasonal_markets, contract == 1) |>
+  arrange(market, date) |>
+  group_by(market) |>
+  mutate(log_ret = c(NA_real_, diff(log(value)))) |>
+  ungroup() |>
+  filter(!is.na(log_ret)) |>
+  mutate(month_lbl = month_labels[month(date)])
+
+p_box <- plot_ly()
+for (mkt in seasonal_markets) {
+  sub_df <- filter(monthly_rets, market == mkt)
+  p_box <- add_trace(
+    p_box,
+    data = sub_df,
+    x    = ~month_lbl,
+    y    = ~log_ret,
+    type = "box",
+    name = mkt,
+    hovertemplate = "%{x}<br>%{y:.2%}<extra></extra>"
+  )
+}
+p_box |>
+  layout(
+    title  = "Monthly Return Distributions — Front Month",
+    xaxis  = list(title = "Month", categoryorder = "array",
+                  categoryarray = month_labels),
+    yaxis  = list(title = "Log Return", tickformat = ".1%"),
+    legend = list(orientation = "h", y = -0.25)
+  )
+```
+
+---
+
+## 7. Hedge Ratios
+
+A hedge ratio answers: "for every unit of exposure in market A, how many
+units of market B do I need to offset the risk?"  We estimate it as the
+slope (beta) from a rolling OLS regression of market A prices on market B
+prices.  Rolling estimation captures how the relationship changes over time.
+
+### 7.1 Cross-Market Hedge Ratio — CL vs BRN
+
+WTI and Brent are close substitutes; a beta near 1 means one barrel of
+WTI hedges roughly one barrel of Brent.  Deviations signal spread regime
+changes — e.g. WTI traded at a deep discount during the 2011 Cushing glut.
+
+```{r}
+hedge_window <- 63  # ~1 quarter
+
+# Helper: rolling OLS beta using slide2_dbl
+rolling_beta <- function(y_vec, x_vec, window) {
+  slide2_dbl(
+    y_vec, x_vec,
+    function(.y, .x) {
+      sub <- data.frame(y = .y, x = .x)
+      sub <- sub[complete.cases(sub), ]
+      if (nrow(sub) < 10L) return(NA_real_)
+      coef(lm(y ~ x, data = sub))[["x"]]
+    },
+    .before   = window - 1L,
+    .complete = TRUE
+  )
+}
+
+# Front-month prices in wide format
+front_wide <- futures |>
+  filter(contract == 1) |>
+  select(date, market, value) |>
+  pivot_wider(names_from = market, values_from = value) |>
+  arrange(date)
+
+cross_beta <- front_wide |>
+  filter(!is.na(CL), !is.na(BRN)) |>
+  mutate(beta = rolling_beta(CL, BRN, hedge_window)) |>
+  filter(!is.na(beta))
+
+plot_ly(data = cross_beta, x = ~date, y = ~beta,
+        type = "scatter", mode = "lines",
+        line = list(color = "#e74c3c"),
+        hovertemplate = "%{x|%Y-%m-%d}<br>Beta: %{y:.3f}<extra></extra>") |>
+  add_trace(x = range(cross_beta$date), y = c(1, 1),
+            type = "scatter", mode = "lines",
+            line = list(color = "grey", dash = "dot"),
+            showlegend = FALSE) |>
+  layout(
+    title = paste0("CL ~ BRN hedge ratio — ", hedge_window, "-day rolling OLS"),
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "Beta (hedge ratio)")
+  )
+```
+
+### 7.2 Term-Structure Hedge Ratio — CL Contract 1 vs Contracts 2–6
+
+A market maker hedging a front-month position with deferred contracts
+needs to know how the hedge ratio changes along the curve.  A beta < 1
+on C1 vs C3 means the front month moves more than the third contract —
+typical in backwardation during supply shocks.
+
+```{r}
+ts_market   <- "CL"
+max_contract <- 6
+
+c1_data <- futures |>
+  filter(market == ts_market, contract == 1) |>
+  select(date, c1_price = value)
+
+p_ts <- plot_ly()
+
+for (cn in seq(2L, max_contract)) {
+  cn_data <- futures |>
+    filter(market == ts_market, contract == cn) |>
+    select(date, cn_price = value) |>
+    inner_join(c1_data, by = "date") |>
+    arrange(date) |>
+    mutate(beta = rolling_beta(c1_price, cn_price, hedge_window)) |>
+    filter(!is.na(beta))
+
+  if (nrow(cn_data) == 0L) next
+
+  p_ts <- add_trace(
+    p_ts,
+    data          = cn_data,
+    x             = ~date,
+    y             = ~beta,
+    type          = "scatter",
+    mode          = "lines",
+    name          = paste0("C1 vs C", cn),
+    hovertemplate = paste0("C1 vs C", cn,
+                           "<br>%{x|%Y-%m-%d}<br>Beta: %{y:.3f}<extra></extra>")
+  )
+}
+
+p_ts |>
+  layout(
+    title  = paste0(ts_market, " — term-structure hedge ratios (", hedge_window, "-day)"),
+    xaxis  = list(title = "Date"),
+    yaxis  = list(title = "Beta"),
+    legend = list(orientation = "h", y = -0.25)
+  )
+```
+
+---
+
+## Summary
+
+| Tab | Key question |
+|---|---|
+| Forward Curve | Contango or backwardation? How has the term structure shifted? |
+| Volatility | Where is vol elevated — near-term or far-term? Which crisis shows up? |
+| Co-Dynamics | Which markets move together? When did that relationship break? |
+| Seasonality | Which months are systematically bullish or bearish? |
+| Hedge Ratios | How many units of the hedge instrument offset one unit of exposure? |

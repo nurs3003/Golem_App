@@ -1,0 +1,6 @@
+default:
+  golem_name: Golem_App_Project
+  golem_version: 0.0.0.9000
+  app_prod: false
+production:
+  app_prod: true
