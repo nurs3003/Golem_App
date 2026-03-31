@@ -13,7 +13,7 @@ app_ui <- function(request) {
       fillable = TRUE,
       # Pinned selector bar between the navbar and tab content
       header   = mod_market_selector_ui("selector"),
-      bslib::nav_panel("Overview",     fillable = TRUE, mod_market_overview_ui("overview")),
+      bslib::nav_panel("Overview",     fillable = FALSE, mod_market_overview_ui("overview")),
       bslib::nav_panel("Curves",       fillable = TRUE, mod_forward_curve_ui("fc")),
       bslib::nav_panel("Volatility",   fillable = TRUE, mod_volatility_ui("vol")),
       bslib::nav_panel("Correlations", fillable = TRUE, mod_codynamics_ui("codyn")),
@@ -33,8 +33,7 @@ golem_add_external_resources <- function() {
     shiny::tags$title("Market Dynamics Explorer"),
     # Allow selectize dropdown to overflow the pinned header bar
     shiny::tags$style(
-      ".selectize-dropdown { z-index: 9999 !important; }
-       .card { overflow: visible !important; }"
+      ".selectize-dropdown { z-index: 9999 !important; }"
     )
   )
 }

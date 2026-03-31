@@ -9,6 +9,7 @@ Description: Golem Shiny application for exploring market dynamics across
     seasonality, and hedge ratio analysis.
 License: MIT + file LICENSE
 Imports:
+    arrow,
     bsicons,
     bslib (>= 0.6.0),
     broom,

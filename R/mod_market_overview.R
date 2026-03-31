@@ -11,17 +11,22 @@
 #'
 #' @param id Shiny module id.
 #' @noRd
-#' @importFrom shiny NS tagList tags uiOutput tableOutput
+#' @importFrom shiny NS tagList tags uiOutput tableOutput div
 #' @importFrom bslib layout_columns card card_header
 mod_market_overview_ui <- function(id) {
   ns <- NS(id)
-  tagList(
-    # Row 1 — price snapshot table (all markets, always visible)
+  shiny::div(
+    style = "padding: 1rem; display: flex; flex-direction: column; gap: 1rem;",
+    # Row 1 — price snapshot table
     bslib::card(
+      fill  = FALSE,   # do not stretch; take only as much height as needed
       bslib::card_header("Market Snapshot — latest front-month prices"),
-      shiny::tableOutput(ns("price_table"))
+      shiny::div(
+        style = "overflow-x: auto;",
+        shiny::tableOutput(ns("price_table"))
+      )
     ),
-    # Row 2 — market profile cards (all 6 markets, always visible)
+    # Row 2 — market profile cards
     shiny::uiOutput(ns("profile_grid"))
   )
 }
