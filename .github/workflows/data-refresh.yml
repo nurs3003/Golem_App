@@ -6,6 +6,9 @@ on:
     - cron: '0 18 * * 1-5'
   workflow_dispatch:   # allows manual trigger from GitHub Actions UI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # silence Node.js 20 deprecation warning
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -33,14 +36,18 @@ jobs:
             libfontconfig1-dev \
             libharfbuzz-dev \
             libfribidi-dev
-        # These are required to compile RTL's dependencies (curl, openssl, xml2)
-        # from source on Ubuntu. Without them the install_github step fails.
 
       - name: Install R dependencies
         run: |
           install.packages(c("remotes", "arrow", "dplyr", "tidyquant"))
-          remotes::install_github("risktoollib/RTL", upgrade = "never")
+          remotes::install_github(
+            "risktoollib/RTL",
+            upgrade    = "never",
+            auth_token = Sys.getenv("GITHUB_TOKEN")
+          )
         shell: Rscript {0}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate feather files
         run: Rscript data-raw/generate_data.R
