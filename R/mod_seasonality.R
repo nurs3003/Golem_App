@@ -24,9 +24,9 @@ mod_seasonality_ui <- function(id) {
         plotly::plotlyOutput(ns("monthly_avg"), height = "calc(100% - 2.8rem)"),
         shiny::tags$p(
           "Historical average daily log-return by calendar month. Positive bars = systematically bullish months.
-           NG rallies in Oct\u2013Nov as the market prices in winter demand ahead of the storage drawdown \u2014
-           by Jan\u2013Feb peak winter is already priced in and returns often turn negative.
-           RB rallies Mar\u2013May (summer-spec blending switch).",
+           NG has two demand peaks (winter heating Nov\u2013Mar; summer power-burn Jun\u2013Sep) but prices
+           typically bottom in March and rise through late summer \u2014 Jan\u2013Feb returns are often negative
+           as winter demand is already priced in. RB rallies Mar\u2013May ahead of the summer driving season.",
           style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
         )
       ),

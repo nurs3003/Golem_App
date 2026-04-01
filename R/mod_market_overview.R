@@ -117,28 +117,33 @@ mod_market_overview_server <- function(id, r) {
         ticker     = "NG",
         unit       = "USD / MMBtu",
         exchange   = "NYMEX (CME Group)",
-        contract   = "10,000 MMBtu of natural gas, delivered at Henry Hub, Louisiana.",
+        contract   = "10,000 MMBtu of pipeline-grade natural gas, physically deliverable at Henry Hub, Louisiana. Minimum tick: $0.001/MMBtu ($10/contract).",
         drivers    = list(
-          "Weather: heating demand (HDD — heating degree days) in winter and cooling demand (CDD) in summer.",
-          "Weekly EIA storage report: injections in Apr–Oct build inventories; withdrawals Nov–Mar draw them down.",
-          "LNG exports: US LNG capacity has grown dramatically since 2016, tightening the domestic market.",
-          "Power generation switching: gas competes with coal for electricity generation; low gas prices displace coal.",
-          "Associated gas production: Permian oil drilling produces gas as a by-product — often flared or discounted.",
-          "Pipeline flows and export capacity to Mexico and Canada."
+          "Weather — the dominant driver: HDD (heating degree days, Nov\u2013Mar) for winter heating demand; CDD (cooling degree days, Jun\u2013Sep) for summer power-burn from air conditioning.",
+          "Power generation: the largest demand sector at ~40 Bcf/d (36% of US consumption); gas competes with coal for dispatch — low gas prices displace coal and vice versa.",
+          "LNG exports: now the single largest incremental demand driver at ~12 Bcf/d (2024); most offtake contracts are indexed to Henry Hub, tying US balances to global gas markets.",
+          "Weekly EIA storage report: injections Apr\u2013Oct build inventories; withdrawals Nov\u2013Mar draw them down. Storage vs the 5-year average is the most-watched supply/demand signal.",
+          "Pipeline exports to Mexico (~6 Bcf/d) and imports from Canada (~8.8 Bcf/d); infrastructure constraints at key hubs cause regional basis blow-outs.",
+          "Associated gas from Permian oil drilling adds supply regardless of gas prices, capping price rallies when oil activity is high."
         ),
         rel        = paste(
-          "Natural gas has the weakest correlation to crude oil of any energy market in this app — it is",
-          "a largely domestic US market with its own supply/demand dynamics. However, in a global LNG",
-          "context, Henry Hub prices increasingly influence European (TTF) and Asian (JKM) gas benchmarks.",
-          "The NG-to-crude ratio (in energy-equivalent terms) captures relative fuel economics and",
-          "can signal gas-to-oil switching in industrial processes."
+          "Natural gas has the weakest correlation to crude oil of any market in this app — its supply/demand",
+          "is driven by weather and domestic infrastructure, not OPEC quotas or global refinery margins.",
+          "However, LNG exports (12 Bcf/d in 2024) are increasingly linking Henry Hub to European (TTF)",
+          "and Asian (JKM) benchmark prices. Historically, US NG prices bottomed in March after the",
+          "winter draw and rose through late summer as the market priced in the next heating season,",
+          "consistent with the STL decomposition of Henry Hub spot prices (2015\u20132025).",
+          "The calendar spread (C1\u2013C2) is the clearest real-time signal of whether the market is",
+          "in contango (storage economics dominate) or backwardation (supply is too tight to store)."
         ),
         risk_angle = paste(
-          "Natural gas has the highest volatility of any major energy market — winter cold snaps or",
-          "summer heat waves can move prices 20–30% in days. A risk manager overseeing gas exposure",
-          "must understand storage levels relative to 5-year averages (the 'storage deficit/surplus'",
-          "narrative), LNG feed-gas demand as a new structural demand driver, and the seasonal",
-          "roll cost across the steep winter forward curve."
+          "NG has the highest volatility of any major energy market \u2014 weather events can move prices",
+          "20\u201330% in days. Key tail risks: (1) 2005 Hurricane Katrina forced a physical shutdown of",
+          "Henry Hub and NYMEX suspended NG futures trading for two weeks; (2) the Feb 2021 Texas",
+          "freeze shut down production and caused a price spike to ~$23/MMBtu in spot markets;",
+          "(3) the 2022 Russia\u2013Ukraine war combined with the Freeport LNG facility explosion drove",
+          "Henry Hub above $9/MMBtu. A risk manager must track storage vs 5-year norms, LNG",
+          "feed-gas demand, and the seasonal roll cost across the steep winter forward curve."
         )
       ),
 
