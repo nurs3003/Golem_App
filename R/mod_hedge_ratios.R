@@ -46,11 +46,22 @@ mod_hedge_ratios_ui <- function(id) {
       bslib::navset_tab(
         bslib::nav_panel(
           "Cross-Market Beta",
-          plotly::plotlyOutput(ns("cross_beta"), height = "100%")
+          plotly::plotlyOutput(ns("cross_beta"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Beta (left axis): units of Market B needed to hedge 1 unit of Market A.
+             R\u00b2 (right axis, 0\u20131): fraction of Market A\u2019s variance explained by the hedge \u2014
+             a low R\u00b2 means the hedge is unreliable even if beta looks stable.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         ),
         bslib::nav_panel(
           "Term-Structure Beta (C1 vs Cn)",
-          plotly::plotlyOutput(ns("ts_beta"), height = "100%")
+          plotly::plotlyOutput(ns("ts_beta"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Rolling OLS beta of C1 on deferred contracts. In backwardation, C1 moves more than Cn so beta > 1;
+             in contango the curve flattens and betas converge toward 1. Used to size calendar spread hedges.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         )
       )
     )
@@ -94,6 +105,21 @@ mod_hedge_ratios_server <- function(id, r) {
       )
     }
 
+    # Helper: rolling OLS R² — same window logic
+    rolling_r2 <- function(y_vec, x_vec, window) {
+      slider::slide2_dbl(
+        y_vec, x_vec,
+        function(.y, .x) {
+          sub <- data.frame(y = .y, x = .x)
+          sub <- sub[stats::complete.cases(sub), , drop = FALSE]
+          if (nrow(sub) < 10L) return(NA_real_)
+          summary(stats::lm(y ~ x, data = sub))$r.squared
+        },
+        .before   = window - 1L,
+        .complete = TRUE
+      )
+    }
+
     # Front-month prices in wide format
     front_wide <- reactive({
       req(!is.null(r$data), r$selected_markets, r$date_range)
@@ -124,24 +150,39 @@ mod_hedge_ratios_server <- function(id, r) {
         x    = wide[[b]]
       ) |>
         dplyr::filter(!is.na(y), !is.na(x)) |>
-        dplyr::mutate(beta = rolling_beta(y, x, win))
+        dplyr::mutate(
+          beta = rolling_beta(y, x, win),
+          r2   = rolling_r2(y, x, win)
+        )
 
       plotly::plot_ly(
         data = df_yx, x = ~date, y = ~beta,
         type = "scatter", mode = "lines",
+        name = "Beta",
         line = list(color = "#e74c3c"),
         hovertemplate = "%{x|%Y-%m-%d}<br>Beta: %{y:.3f}<extra></extra>"
       ) |>
         plotly::add_trace(
-          x = range(df_yx$date), y = c(1, 1),
+          x = range(df_yx$date, na.rm = TRUE), y = c(1, 1),
           type = "scatter", mode = "lines",
           line = list(color = "grey", dash = "dot"),
-          showlegend = FALSE
+          showlegend = FALSE, hoverinfo = "skip"
+        ) |>
+        plotly::add_trace(
+          data  = df_yx, x = ~date, y = ~r2,
+          type  = "scatter", mode = "lines",
+          name  = "R\u00b2",
+          yaxis = "y2",
+          line  = list(color = "#2980b9", dash = "dot"),
+          hovertemplate = "%{x|%Y-%m-%d}<br>R\u00b2: %{y:.3f}<extra></extra>"
         ) |>
         plotly::layout(
           title  = paste0("Hedge ratio: ", a, " (Y) ~ ", b, " (X), ", win, "-day window"),
           xaxis  = list(title = "Date"),
-          yaxis  = list(title = "Beta (hedge ratio)")
+          yaxis  = list(title = "Beta (hedge ratio)"),
+          yaxis2 = list(title = "R\u00b2", overlaying = "y", side = "right",
+                        range = c(0, 1), showgrid = FALSE),
+          legend = list(orientation = "h", y = -0.2)
         )
     })
 

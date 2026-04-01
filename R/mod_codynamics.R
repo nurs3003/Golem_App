@@ -40,11 +40,51 @@ mod_codynamics_ui <- function(id) {
       bslib::navset_tab(
         bslib::nav_panel(
           "Correlation Matrix",
-          plotly::plotlyOutput(ns("corr_matrix"), height = "100%")
+          plotly::plotlyOutput(ns("corr_matrix"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Dark blue (\u22481) = strong positive correlation; dark red (\u2248\u22121) = strong negative correlation.
+             WTI and Brent typically exceed 0.9; Natural Gas is the most independent market in this set.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         ),
         bslib::nav_panel(
           "Rolling Correlation (pair)",
-          plotly::plotlyOutput(ns("rolling_corr"), height = "100%")
+          plotly::plotlyOutput(ns("rolling_corr"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "When correlation drops sharply, markets are diverging — often a structural shift (e.g. the US export ban
+             lift in 2015 lowered WTI\u2013Brent correlation). The grey line shows the WTI\u2013Brent spread for context.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
+        ),
+        bslib::nav_panel(
+          "PCA",
+          # Top row: scree (left) + loadings (right)
+          bslib::layout_columns(
+            col_widths = c(5, 7),
+            shiny::div(
+              plotly::plotlyOutput(ns("pca_scree"), height = "260px"),
+              shiny::tags$p(
+                "PC1 capturing >60% of variance signals a single dominant factor (global demand risk).
+                 More PCs needed = more idiosyncratic market behaviour.",
+                style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+              )
+            ),
+            shiny::div(
+              plotly::plotlyOutput(ns("pca_loadings"), height = "260px"),
+              shiny::tags$p(
+                "Same-sign loadings on PC1 = all markets respond to the same factor.
+                 PC2 often isolates Natural Gas (weather-driven) from the oil complex.",
+                style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+              )
+            )
+          ),
+          # Bottom row: PC1 score time series
+          plotly::plotlyOutput(ns("pca_scores"), height = "200px"),
+          shiny::tags$p(
+            "PC1 score tracks the dominant co-movement factor daily. Extreme spikes coincide with
+             demand shocks (COVID Mar 2020) or supply disruptions (Russia-Ukraine Feb 2022).",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         )
       )
     )
@@ -60,7 +100,8 @@ mod_codynamics_ui <- function(id) {
 #' @importFrom dplyr filter arrange mutate group_by ungroup select
 #' @importFrom tidyr pivot_wider
 #' @importFrom slider slide_dbl slide2_dbl
-#' @importFrom plotly plot_ly layout renderPlotly add_trace
+#' @importFrom plotly plot_ly layout renderPlotly add_trace add_bars
+#' @importFrom stats prcomp cor
 mod_codynamics_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
 
@@ -110,13 +151,21 @@ mod_codynamics_server <- function(id, r) {
       mat <- stats::cor(sub[, -1, drop = FALSE], use = "pairwise.complete.obs")
       nms <- colnames(mat)
 
+      # Explicit colorscale: -1 = dark blue, 0 = white, +1 = dark red
+      corr_colorscale <- list(
+        list(0,    "#053061"),
+        list(0.25, "#4393c3"),
+        list(0.5,  "#f7f7f7"),
+        list(0.75, "#d6604d"),
+        list(1,    "#67001f")
+      )
+
       plotly::plot_ly(
         x    = nms,
         y    = nms,
         z    = mat,
         type = "heatmap",
-        colorscale  = "RdBu",
-        reversescale = TRUE,
+        colorscale    = corr_colorscale,
         zmid = 0,
         zmin = -1, zmax = 1,
         hovertemplate = "%{x} vs %{y}<br>Corr: %{z:.2f}<extra></extra>"
@@ -154,9 +203,10 @@ mod_codynamics_server <- function(id, r) {
           )
         )
 
-      plotly::plot_ly(
+      p <- plotly::plot_ly(
         data = roll, x = ~date, y = ~roll_corr,
         type = "scatter", mode = "lines",
+        name = paste0(a, " vs ", b),
         line = list(color = "#2980b9"),
         hovertemplate = "%{x|%Y-%m-%d}<br>Corr: %{y:.2f}<extra></extra>"
       ) |>
@@ -165,11 +215,160 @@ mod_codynamics_server <- function(id, r) {
           type = "scatter", mode = "lines",
           line = list(color = "grey", dash = "dash"),
           showlegend = FALSE
+        )
+
+      # Overlay WTI-Brent spread on second axis if both markets are in the data
+      if (!is.null(r$data)) {
+        cl_s <- r$data |>
+          dplyr::filter(market == "CL", contract == 1L,
+                        date >= r$date_range[1], date <= r$date_range[2]) |>
+          dplyr::select(date, cl = value)
+        brn_s <- r$data |>
+          dplyr::filter(market == "BRN", contract == 1L,
+                        date >= r$date_range[1], date <= r$date_range[2]) |>
+          dplyr::select(date, brn = value)
+        if (nrow(cl_s) > 0L && nrow(brn_s) > 0L) {
+          basis_df <- dplyr::inner_join(cl_s, brn_s, by = "date") |>
+            dplyr::mutate(basis = cl - brn)
+          p <- p |>
+            plotly::add_trace(
+              data  = basis_df, x = ~date, y = ~basis,
+              type  = "scatter", mode = "lines",
+              name  = "WTI\u2013Brent ($/bbl)",
+              yaxis = "y2",
+              line  = list(color = "rgba(231,76,60,0.45)", width = 1),
+              hovertemplate = "%{x|%Y-%m-%d}<br>WTI\u2013Brent: $%{y:.2f}<extra></extra>"
+            ) |>
+            plotly::layout(
+              yaxis2 = list(title = "WTI\u2013Brent ($/bbl)", overlaying = "y",
+                            side = "right", showgrid = FALSE)
+            )
+        }
+      }
+
+      p |> plotly::layout(
+        title  = paste0(a, " vs ", b, " \u2014 ", win, "-day rolling correlation"),
+        xaxis  = list(title = "Date"),
+        yaxis  = list(title = "Correlation", range = c(-1, 1)),
+        legend = list(orientation = "h", y = -0.2)
+      )
+    })
+
+    # PCA on the full wide returns matrix (all selected markets)
+    pca_result <- reactive({
+      df <- wide_returns()
+      req(nrow(df) > 10L)
+      mat <- as.matrix(df[, -1, drop = FALSE])
+      # Drop columns with too many NAs, then complete cases only
+      ok_cols <- colMeans(is.na(mat)) < 0.5
+      mat     <- mat[, ok_cols, drop = FALSE]
+      mat     <- mat[complete.cases(mat), , drop = FALSE]
+      req(nrow(mat) > 10L, ncol(mat) >= 2L)
+      stats::prcomp(mat, center = TRUE, scale. = TRUE)
+    })
+
+    output$pca_scree <- plotly::renderPlotly({
+      pca <- pca_result()
+      var_exp <- pca$sdev^2 / sum(pca$sdev^2) * 100
+      n_pcs   <- length(var_exp)
+      cum_var <- cumsum(var_exp)
+
+      plotly::plot_ly() |>
+        plotly::add_bars(
+          x = paste0("PC", seq_len(n_pcs)),
+          y = var_exp,
+          name = "Explained",
+          marker = list(color = "#2980b9"),
+          hovertemplate = "%{x}: %{y:.1f}%<extra></extra>"
+        ) |>
+        plotly::add_trace(
+          x    = paste0("PC", seq_len(n_pcs)),
+          y    = cum_var,
+          type = "scatter", mode = "lines+markers",
+          name = "Cumulative",
+          yaxis = "y2",
+          line  = list(color = "#e74c3c"),
+          hovertemplate = "%{x}: %{y:.1f}%<extra></extra>"
         ) |>
         plotly::layout(
-          title  = paste0(a, " vs ", b, " — ", win, "-day rolling correlation"),
-          xaxis  = list(title = "Date"),
-          yaxis  = list(title = "Correlation", range = c(-1, 1))
+          title  = "Scree Plot",
+          xaxis  = list(title = ""),
+          yaxis  = list(title = "Variance explained (%)"),
+          yaxis2 = list(title = "Cumulative (%)", overlaying = "y", side = "right",
+                        range = c(0, 100)),
+          legend = list(orientation = "h", x = 0, y = -0.2),
+          bargap = 0.3
+        )
+    })
+
+    output$pca_loadings <- plotly::renderPlotly({
+      pca <- pca_result()
+      rot <- pca$rotation[, 1:min(3L, ncol(pca$rotation)), drop = FALSE]
+      markets <- rownames(rot)
+
+      plotly::plot_ly() |>
+        plotly::add_bars(
+          x    = markets,
+          y    = rot[, 1],
+          name = "PC1",
+          marker = list(color = "#2980b9"),
+          hovertemplate = "%{x}: %{y:.3f}<extra></extra>"
+        ) |>
+        plotly::add_bars(
+          x    = markets,
+          y    = rot[, 2],
+          name = "PC2",
+          marker = list(color = "#e67e22"),
+          hovertemplate = "%{x}: %{y:.3f}<extra></extra>"
+        ) |>
+        {
+          if (ncol(rot) >= 3L) {
+            function(p) plotly::add_bars(
+              p,
+              x    = markets,
+              y    = rot[, 3],
+              name = "PC3",
+              marker = list(color = "#27ae60"),
+              hovertemplate = "%{x}: %{y:.3f}<extra></extra>"
+            )
+          } else {
+            identity
+          }
+        }() |>
+        plotly::layout(
+          title   = "PC Loadings (first 3 PCs)",
+          barmode = "group",
+          xaxis   = list(title = ""),
+          yaxis   = list(title = "Loading"),
+          legend  = list(orientation = "h", x = 0, y = -0.25)
+        )
+    })
+
+    output$pca_scores <- plotly::renderPlotly({
+      df  <- wide_returns()
+      req(nrow(df) > 10L)
+      pca <- pca_result()
+
+      # Re-build the same complete-case matrix used for PCA
+      mat     <- as.matrix(df[, -1, drop = FALSE])
+      ok_cols <- colMeans(is.na(mat)) < 0.5
+      mat     <- mat[, ok_cols, drop = FALSE]
+      ok_rows <- complete.cases(mat)
+      dates   <- df$date[ok_rows]
+      scores  <- pca$x[, 1]   # PC1 score per observation
+
+      plotly::plot_ly(
+        x    = dates,
+        y    = scores,
+        type = "scatter",
+        mode = "lines",
+        line = list(color = "#8e44ad"),
+        hovertemplate = "%{x|%Y-%m-%d}<br>PC1 score: %{y:.3f}<extra></extra>"
+      ) |>
+        plotly::layout(
+          title = "PC1 Score — time series (captures dominant co-movement)",
+          xaxis = list(title = "Date"),
+          yaxis = list(title = "PC1 score")
         )
     })
 

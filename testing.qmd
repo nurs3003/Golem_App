@@ -397,6 +397,127 @@ plot_ly(data = pair_data, x = ~date, y = ~roll_corr,
   )
 ```
 
+### 5.3 PCA — Principal Component Analysis of Market Co-Movement
+
+PCA reduces the correlation structure of all selected markets into a small
+number of uncorrelated **principal components (PCs)**.
+
+- **PC1** typically captures the broad "risk-on / risk-off" factor — when
+  crude, distillates, and gasoline all move together (high-vol regimes, demand
+  shocks).
+- **PC2** often separates natural gas (weather-driven, regional) from the oil
+  complex — it tells you when NG is diverging from crude.
+- **Loadings** show each market's contribution to each PC.  A large positive
+  loading means the market moves in the same direction as the PC; a near-zero
+  loading means it is largely orthogonal to that factor.
+- **Scree plot**: the % variance explained by each PC.  If PC1 explains 70%+,
+  markets are highly co-integrated.  If variance is spread across 3–4 PCs,
+  markets have more idiosyncratic drivers.
+- **PC1 score time-series**: a single number per day representing the
+  "market stress" factor.  Spikes correspond to COVID March 2020, the 2022
+  Russia-Ukraine supply shock, etc.
+
+```{r}
+# Build the same wide returns matrix used by the app
+pca_markets <- c("CL", "BRN", "NG", "HO", "RB")
+
+wide_pca <- futures |>
+  filter(market %in% pca_markets, contract == 1) |>
+  arrange(market, date) |>
+  group_by(market) |>
+  mutate(log_ret = c(NA_real_, diff(log(value)))) |>
+  ungroup() |>
+  filter(!is.na(log_ret)) |>
+  pivot_wider(id_cols = date, names_from = market, values_from = log_ret) |>
+  arrange(date)
+
+# Drop rows with any NA (prcomp requires complete cases)
+mat_full  <- as.matrix(wide_pca[, -1])
+ok_rows   <- complete.cases(mat_full)
+mat_clean <- mat_full[ok_rows, ]
+dates_pca <- wide_pca$date[ok_rows]
+
+# Run PCA (center + scale so all markets are unit-variance)
+pca <- prcomp(mat_clean, center = TRUE, scale. = TRUE)
+
+# How many PCs to show
+n_pcs <- ncol(pca$rotation)
+```
+
+**Scree plot** — variance explained per PC and cumulative:
+
+```{r}
+var_exp <- pca$sdev^2 / sum(pca$sdev^2) * 100
+cum_var <- cumsum(var_exp)
+pc_labels <- paste0("PC", seq_len(n_pcs))
+
+plot_ly() |>
+  add_bars(
+    x = pc_labels, y = var_exp,
+    name   = "Explained (%)",
+    marker = list(color = "#2980b9"),
+    hovertemplate = "%{x}: %{y:.1f}%<extra></extra>"
+  ) |>
+  add_trace(
+    x = pc_labels, y = cum_var,
+    type = "scatter", mode = "lines+markers",
+    name  = "Cumulative (%)",
+    yaxis = "y2",
+    line  = list(color = "#e74c3c"),
+    hovertemplate = "%{x}: %{y:.1f}%<extra></extra>"
+  ) |>
+  layout(
+    title  = "Scree Plot — Variance Explained by Each PC",
+    xaxis  = list(title = ""),
+    yaxis  = list(title = "Variance explained (%)"),
+    yaxis2 = list(title = "Cumulative (%)", overlaying = "y",
+                  side = "right", range = c(0, 100)),
+    legend = list(orientation = "h", x = 0, y = -0.2),
+    bargap = 0.3
+  )
+```
+
+**Loadings** — which markets drive each PC:
+
+```{r}
+rot <- pca$rotation[, 1:min(3L, n_pcs), drop = FALSE]
+mkts <- rownames(rot)
+
+plot_ly() |>
+  add_bars(x = mkts, y = rot[, 1], name = "PC1",
+           marker = list(color = "#2980b9"),
+           hovertemplate = "%{x}: %{y:.3f}<extra></extra>") |>
+  add_bars(x = mkts, y = rot[, 2], name = "PC2",
+           marker = list(color = "#e67e22"),
+           hovertemplate = "%{x}: %{y:.3f}<extra></extra>") |>
+  add_bars(x = mkts, y = rot[, 3], name = "PC3",
+           marker = list(color = "#27ae60"),
+           hovertemplate = "%{x}: %{y:.3f}<extra></extra>") |>
+  layout(
+    title   = "PC Loadings — first 3 principal components",
+    barmode = "group",
+    xaxis   = list(title = ""),
+    yaxis   = list(title = "Loading"),
+    legend  = list(orientation = "h", x = 0, y = -0.25)
+  )
+```
+
+**PC1 score time-series** — the dominant co-movement factor over time:
+
+```{r}
+pc1_scores <- pca$x[, 1]
+
+plot_ly(x = dates_pca, y = pc1_scores,
+        type = "scatter", mode = "lines",
+        line = list(color = "#8e44ad"),
+        hovertemplate = "%{x|%Y-%m-%d}<br>PC1 score: %{y:.3f}<extra></extra>") |>
+  layout(
+    title = "PC1 Score — daily time series (dominant co-movement factor)",
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "PC1 score")
+  )
+```
+
 ---
 
 ## 6. Seasonality
@@ -606,6 +727,7 @@ p_ts |>
 |---|---|
 | Forward Curve | Contango or backwardation? How has the term structure shifted? |
 | Volatility | Where is vol elevated — near-term or far-term? Which crisis shows up? |
-| Co-Dynamics | Which markets move together? When did that relationship break? |
+| Co-Dynamics — Correlation | Which markets move together? When did that relationship break? |
+| Co-Dynamics — PCA | How many independent risk factors drive these markets? What is each factor? |
 | Seasonality | Which months are systematically bullish or bearish? |
 | Hedge Ratios | How many units of the hedge instrument offset one unit of exposure? |

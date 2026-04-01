@@ -21,6 +21,7 @@ Imports:
     plotly,
     rlang,
     shiny (>= 1.8.0),
+    shinyjs,
     slider,
     tidyr,
     tidyquant,

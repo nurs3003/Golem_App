@@ -38,11 +38,23 @@ mod_volatility_ui <- function(id) {
       bslib::navset_tab(
         bslib::nav_panel(
           "Rolling Vol (front month)",
-          plotly::plotlyOutput(ns("vol_ts"), height = "100%")
+          plotly::plotlyOutput(ns("vol_ts"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Annualised volatility from daily log returns. The dashed red line marks the 80th-percentile threshold
+             across selected markets — sustained readings above it signal a high-vol regime
+             (e.g. COVID Mar 2020, Russia-Ukraine Feb 2022).",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         ),
         bslib::nav_panel(
           "Vol Surface (heatmap)",
-          plotly::plotlyOutput(ns("vol_heatmap"), height = "100%")
+          plotly::plotlyOutput(ns("vol_heatmap"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Each cell shows annualised vol for a given contract and date (Mondays only for performance).
+             Near-term contracts (C1–C3) are typically more volatile than deferred contracts;
+             horizontal red bands mark market-wide stress events.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         )
       )
     )
@@ -104,6 +116,23 @@ mod_volatility_server <- function(id, r) {
           hovertemplate = "%{x|%Y-%m-%d}<br>Ann. Vol: %{y:.1%}<extra></extra>"
         )
       }
+
+      # 80th-percentile regime threshold across all selected markets
+      all_vols <- df$roll_vol[!is.na(df$roll_vol)]
+      if (length(all_vols) > 0L) {
+        threshold  <- stats::quantile(all_vols, 0.80)
+        date_range <- range(df$date[!is.na(df$roll_vol)])
+        p <- plotly::add_trace(
+          p,
+          x    = date_range,
+          y    = c(threshold, threshold),
+          type = "scatter", mode = "lines",
+          name = "80th pctile (regime)",
+          line = list(color = "#e74c3c", dash = "dash", width = 1.5),
+          hoverinfo = "skip"
+        )
+      }
+
       plotly::layout(
         p,
         xaxis     = list(title = "Date"),

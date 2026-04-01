@@ -16,6 +16,15 @@ app_server <- function(input, output, session) {
     date_range       = c(as.Date("2007-01-01"), Sys.Date())
   )
 
+  # Hide the selector bar on Overview (it has no effect there)
+  shiny::observeEvent(input$main_tabs, {
+    if (isTRUE(input$main_tabs == "Overview")) {
+      shinyjs::hide("selector_bar")
+    } else {
+      shinyjs::show("selector_bar")
+    }
+  }, ignoreNULL = FALSE)
+
   # Load data once at session start
   observe({
     showNotification("Loading futures data...", id = "load_fut", duration = NULL, type = "message")

@@ -2,17 +2,19 @@
 #'
 #' @param request Internal parameter for \code{{shiny}}. DO NOT remove.
 #' @noRd
-#' @importFrom shiny tagList
+#' @importFrom shiny tagList div
 #' @importFrom bslib page_navbar nav_panel bs_theme nav_spacer
 app_ui <- function(request) {
   tagList(
     golem_add_external_resources(),
+    shinyjs::useShinyjs(),
     bslib::page_navbar(
+      id       = "main_tabs",
       title    = "Market Dynamics Explorer",
       theme    = bslib::bs_theme(bootswatch = "flatly", version = 5),
       fillable = TRUE,
-      # Pinned selector bar between the navbar and tab content
-      header   = mod_market_selector_ui("selector"),
+      # Pinned selector bar — hidden on Overview tab via shinyjs
+      header   = shiny::div(id = "selector_bar", mod_market_selector_ui("selector")),
       bslib::nav_panel("Overview",     fillable = FALSE, mod_market_overview_ui("overview")),
       bslib::nav_panel("Curves",       fillable = TRUE, mod_forward_curve_ui("fc")),
       bslib::nav_panel("Volatility",   fillable = TRUE, mod_volatility_ui("vol")),

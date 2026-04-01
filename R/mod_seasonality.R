@@ -21,11 +21,32 @@ mod_seasonality_ui <- function(id) {
     bslib::navset_tab(
       bslib::nav_panel(
         "Average Monthly Return",
-        plotly::plotlyOutput(ns("monthly_avg"), height = "100%")
+        plotly::plotlyOutput(ns("monthly_avg"), height = "calc(100% - 2.8rem)"),
+        shiny::tags$p(
+          "Historical average daily log-return by calendar month. Positive bars = systematically bullish months.
+           NG rallies in Oct\u2013Nov as the market prices in winter demand ahead of the storage drawdown \u2014
+           by Jan\u2013Feb peak winter is already priced in and returns often turn negative.
+           RB rallies Mar\u2013May (summer-spec blending switch).",
+          style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+        )
       ),
       bslib::nav_panel(
         "Monthly Distribution (box)",
-        plotly::plotlyOutput(ns("monthly_box"), height = "100%")
+        plotly::plotlyOutput(ns("monthly_box"), height = "calc(100% - 2.8rem)"),
+        shiny::tags$p(
+          "Full return distribution by month. Wide box = high dispersion; long tails = tail risk.
+           Compare the median (centre line) to the average bar chart to identify seasonal skew.",
+          style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+        )
+      ),
+      bslib::nav_panel(
+        "Year-over-Year",
+        plotly::plotlyOutput(ns("yoy"), height = "calc(100% - 2.8rem)"),
+        shiny::tags$p(
+          "Cumulative return for the current year (bold) vs the historical interquartile range (shaded band).
+           Tracking above the IQR by mid-year has historically signalled a strong full-year outcome.",
+          style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+        )
       )
     )
   )
@@ -38,7 +59,8 @@ mod_seasonality_ui <- function(id) {
 #' @noRd
 #' @importFrom shiny moduleServer reactive req
 #' @importFrom dplyr filter arrange mutate group_by ungroup summarise
-#' @importFrom lubridate month
+#' @importFrom lubridate month year yday
+#' @importFrom stats quantile
 #' @importFrom plotly plot_ly layout renderPlotly add_trace
 mod_seasonality_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
@@ -126,6 +148,97 @@ mod_seasonality_server <- function(id, r) {
                       categoryarray = month_labels),
         yaxis  = list(title = "Log Return", tickformat = ".1%"),
         legend = list(orientation = "h", y = -0.2)
+      )
+    })
+
+    # Year-over-year: current year (bold) vs historical IQR band per market
+    output$yoy <- plotly::renderPlotly({
+      df_raw <- monthly_returns()
+      req(nrow(df_raw) > 0L)
+
+      current_year <- lubridate::year(Sys.Date())
+
+      df_yoy <- df_raw |>
+        dplyr::mutate(
+          year = lubridate::year(date),
+          doy  = lubridate::yday(date)
+        ) |>
+        dplyr::arrange(market, year, doy) |>
+        dplyr::group_by(market, year) |>
+        dplyr::mutate(cum_ret = cumsum(log_ret)) |>
+        dplyr::ungroup()
+
+      # Palette: one colour per market
+      palette   <- c("#2980b9", "#e74c3c", "#27ae60", "#8e44ad", "#e67e22", "#2c3e50")
+      fill_rgba <- c("rgba(41,128,185,0.18)", "rgba(231,76,60,0.18)",
+                     "rgba(39,174,96,0.18)",  "rgba(142,68,173,0.18)",
+                     "rgba(230,126,34,0.18)", "rgba(44,62,80,0.18)")
+      mkts <- unique(df_yoy$market)
+
+      p <- plotly::plot_ly()
+
+      for (i in seq_along(mkts)) {
+        mkt      <- mkts[i]
+        col      <- palette[(i - 1L) %% length(palette) + 1L]
+        fill_col <- fill_rgba[(i - 1L) %% length(fill_rgba) + 1L]
+        mkt_df   <- dplyr::filter(df_yoy, market == mkt)
+
+        # Historical IQR by day-of-year (all years before current)
+        hist_df <- dplyr::filter(mkt_df, year < current_year) |>
+          dplyr::group_by(doy) |>
+          dplyr::summarise(
+            q25 = stats::quantile(cum_ret, 0.25, na.rm = TRUE),
+            q75 = stats::quantile(cum_ret, 0.75, na.rm = TRUE),
+            .groups = "drop"
+          ) |>
+          dplyr::arrange(doy)
+
+        # Current-year trace
+        curr_df <- dplyr::filter(mkt_df, year == current_year) |>
+          dplyr::arrange(doy)
+
+        if (nrow(hist_df) > 0L) {
+          # Lower bound (invisible) — must be added first for tonexty fill
+          p <- plotly::add_trace(p,
+            data = hist_df, x = ~doy, y = ~q25,
+            type = "scatter", mode = "lines",
+            line = list(color = "transparent"),
+            legendgroup = mkt, showlegend = FALSE,
+            hoverinfo = "skip", name = paste0(mkt, "_q25")
+          )
+          # Upper bound with fill back to lower
+          p <- plotly::add_trace(p,
+            data      = hist_df, x = ~doy, y = ~q75,
+            type      = "scatter", mode = "lines",
+            fill      = "tonexty",
+            fillcolor = fill_col,
+            line      = list(color = "transparent"),
+            legendgroup = mkt, showlegend = TRUE,
+            name      = paste0(mkt, " IQR"),
+            hovertemplate = paste0(mkt, " IQR<br>Day %{x}<br>%{y:.1%}<extra></extra>")
+          )
+        }
+
+        if (nrow(curr_df) > 0L) {
+          p <- plotly::add_trace(p,
+            data = curr_df, x = ~doy, y = ~cum_ret,
+            type = "scatter", mode = "lines",
+            name = paste0(mkt, " (", current_year, ")"),
+            legendgroup = mkt,
+            line = list(color = col, width = 2.5),
+            hovertemplate = paste0(mkt, " ", current_year,
+                                   "<br>Day %{x}<br>%{y:.2%}<extra></extra>")
+          )
+        }
+      }
+
+      plotly::layout(p,
+        title     = paste0("Year-over-Year \u2014 ", current_year,
+                           " cumulative return vs historical IQR"),
+        xaxis     = list(title = "Day of Year"),
+        yaxis     = list(title = "Cumulative Log Return", tickformat = ".1%"),
+        hovermode = "x unified",
+        legend    = list(orientation = "h", y = -0.2)
       )
     })
 

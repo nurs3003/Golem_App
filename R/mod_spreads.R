@@ -42,16 +42,40 @@ mod_spreads_ui <- function(id) {
       bslib::card_header("Spread Dynamics"),
       bslib::navset_tab(
         bslib::nav_panel(
-          "WTI – Brent Spread",
-          plotly::plotlyOutput(ns("wti_brent"), height = "100%")
+          "WTI \u2013 Brent Spread",
+          plotly::plotlyOutput(ns("wti_brent"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Positive = WTI at premium (rare post-2015 export ban lift); negative = WTI discount.
+             The 2011\u20132013 Cushing pipeline glut drove WTI to a $25 discount vs Brent.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         ),
         bslib::nav_panel(
           "Crack Spreads (refinery margin)",
-          plotly::plotlyOutput(ns("crack"), height = "100%")
+          plotly::plotlyOutput(ns("crack"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Crack spread = refined product price (\u00d742 to $/bbl) minus WTI cost.
+             Rising cracks incentivise higher refinery run rates. HO cracks peak in winter; RB cracks peak pre-summer driving season.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         ),
         bslib::nav_panel(
-          "Calendar Spread (C1 – Cn)",
-          plotly::plotlyOutput(ns("calendar"), height = "100%")
+          "Calendar Spread (C1 \u2013 Cn)",
+          plotly::plotlyOutput(ns("calendar"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Positive (backwardation) = tight near-term supply. Negative (contango) = oversupply or storage carry.
+             The sign and magnitude determine the cost of rolling a futures hedge forward.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
+        ),
+        bslib::nav_panel(
+          "Spread Z-Scores",
+          plotly::plotlyOutput(ns("spread_zscore"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "How statistically wide or tight is each spread relative to its 252-day history?
+             Readings above +2\u03c3 or below \u22122\u03c3 are rare and often signal mean-reversion opportunities or structural regime shifts.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         )
       )
     )
@@ -64,7 +88,9 @@ mod_spreads_ui <- function(id) {
 #' @param r Shared \code{reactiveValues} environment.
 #' @noRd
 #' @importFrom shiny moduleServer reactive req
-#' @importFrom dplyr filter arrange mutate select inner_join
+#' @importFrom dplyr filter arrange mutate select inner_join bind_rows
+#' @importFrom slider slide_dbl
+#' @importFrom stats sd
 #' @importFrom plotly plot_ly add_trace layout renderPlotly
 mod_spreads_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
@@ -209,6 +235,86 @@ mod_spreads_server <- function(id, r) {
                           "  |  + = backwardation  |  – = contango"),
           xaxis  = list(title = ""),
           yaxis  = list(title = "Spread (USD)")
+        )
+    })
+
+    # ----- Spread Z-Scores ---------------------------------------------------
+    # 252-day rolling z-score of each spread: (spread - roll_mean) / roll_sd
+    # ±2σ reference lines show historically extreme readings.
+
+    output$spread_zscore <- plotly::renderPlotly({
+      cl  <- front("CL")  |> dplyr::rename(cl  = value)
+      brn <- front("BRN") |> dplyr::rename(brn = value)
+      ho  <- front("HO")  |> dplyr::rename(ho  = value)
+      rb  <- front("RB")  |> dplyr::rename(rb  = value)
+
+      z_win <- 252L
+
+      compute_z <- function(df, spread_col, label) {
+        df |>
+          dplyr::mutate(
+            spread    = .data[[spread_col]],
+            roll_mean = slider::slide_dbl(spread, mean,
+                          .before = z_win - 1L, .complete = TRUE, na.rm = TRUE),
+            roll_sd   = slider::slide_dbl(spread,
+                          ~ stats::sd(.x, na.rm = TRUE),
+                          .before = z_win - 1L, .complete = TRUE),
+            z_score   = (spread - roll_mean) / roll_sd,
+            name      = label
+          ) |>
+          dplyr::filter(!is.na(z_score))
+      }
+
+      wti_brent_df <- dplyr::inner_join(cl, brn, by = "date") |>
+        dplyr::mutate(wtibrent = cl - brn)
+      ho_crack_df  <- dplyr::inner_join(cl, ho,  by = "date") |>
+        dplyr::mutate(hocrack  = ho * 42 - cl)
+      rb_crack_df  <- dplyr::inner_join(cl, rb,  by = "date") |>
+        dplyr::mutate(rbcrack  = rb * 42 - cl)
+
+      spreads_z <- dplyr::bind_rows(
+        compute_z(wti_brent_df, "wtibrent", "WTI\u2013Brent"),
+        compute_z(ho_crack_df,  "hocrack",  "HO Crack"),
+        compute_z(rb_crack_df,  "rbcrack",  "RB Crack")
+      )
+
+      req(nrow(spreads_z) > 0L)
+      x_range <- range(spreads_z$date)
+
+      colors <- c("WTI\u2013Brent" = "#2c3e50", "HO Crack" = "#2980b9", "RB Crack" = "#e67e22")
+
+      p <- plotly::plot_ly()
+      for (nm in unique(spreads_z$name)) {
+        sub <- dplyr::filter(spreads_z, name == nm)
+        p <- plotly::add_trace(
+          p,
+          data          = sub,
+          x             = ~date,
+          y             = ~z_score,
+          type          = "scatter",
+          mode          = "lines",
+          name          = nm,
+          line          = list(color = colors[nm]),
+          hovertemplate = paste0(nm, "<br>%{x|%Y-%m-%d}<br>Z: %{y:.2f}\u03c3<extra></extra>")
+        )
+      }
+
+      p |>
+        plotly::add_trace(x = x_range, y = c( 2,  2), type = "scatter", mode = "lines",
+          line = list(color = "#e74c3c", dash = "dash", width = 1),
+          showlegend = FALSE, hoverinfo = "skip") |>
+        plotly::add_trace(x = x_range, y = c(-2, -2), type = "scatter", mode = "lines",
+          line = list(color = "#e74c3c", dash = "dash", width = 1),
+          showlegend = FALSE, hoverinfo = "skip") |>
+        plotly::add_trace(x = x_range, y = c( 0,  0), type = "scatter", mode = "lines",
+          line = list(color = "grey", dash = "dot", width = 1),
+          showlegend = FALSE, hoverinfo = "skip") |>
+        plotly::layout(
+          title     = paste0("Spread Z-Scores \u2014 ", z_win, "-day rolling normalisation"),
+          xaxis     = list(title = ""),
+          yaxis     = list(title = "Z-Score (\u03c3)"),
+          hovermode = "x unified",
+          legend    = list(orientation = "h", y = -0.2)
         )
     })
 
