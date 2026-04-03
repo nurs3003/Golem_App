@@ -33,13 +33,9 @@ COPY DESCRIPTION /app/DESCRIPTION
 RUN R -e "remotes::install_deps('/app', dependencies = TRUE, upgrade = 'never')"
 
 # ── RTL (GitHub-only package, installed after CRAN deps) ─────────────────────
-# Build arg lets GitHub Actions pass GITHUB_TOKEN to avoid API rate limits.
-ARG GITHUB_TOKEN
-RUN R -e "remotes::install_github(\
-  'risktoollib/RTL', \
-  upgrade    = 'never', \
-  auth_token = Sys.getenv('GITHUB_TOKEN')\
-)"
+# RTL is a public repo — no auth token needed for installation.
+# The token is only required when GitHub API rate limits are hit.
+RUN R -e "remotes::install_github('risktoollib/RTL', upgrade = 'never')"
 
 # ── Copy the full package and install it ─────────────────────────────────────
 COPY . /app
