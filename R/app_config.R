@@ -1,3 +1,23 @@
+# Consistent market colour palette — used across every module.
+# One named colour per ticker so CL is always blue, NG always red, etc.
+market_colors <- c(
+  CL  = "#2980b9",   # steel blue   – WTI Crude
+  BRN = "#27ae60",   # emerald      – Brent Crude
+  NG  = "#e74c3c",   # red          – Natural Gas
+  HO  = "#e67e22",   # orange       – Heating Oil
+  RB  = "#8e44ad",   # purple       – RBOB Gasoline
+  HTT = "#16a085",   # teal         – WTI Houston
+  CMT = "#7f8c8d"    # grey         – US Treasuries
+)
+
+# Null-coalescing operator — used across modules for colour fallbacks.
+`%||%` <- function(x, y) if (!is.null(x) && !is.na(x)) x else y
+
+# Alert / reference-line colour — distinct from any market colour.
+# Use this for regime thresholds, ±2σ lines, and other annotations so they
+# don't visually collide with NG's red (#e74c3c).
+alert_color <- "#c0392b"
+
 #' Access files in the current app
 #'
 #' Wrapper around \code{system.file()} that points to files inside

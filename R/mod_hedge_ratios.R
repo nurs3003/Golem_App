@@ -19,10 +19,14 @@ mod_hedge_ratios_ui <- function(id) {
     fill       = TRUE,
     bslib::card(
       bslib::card_header("Settings"),
-      shiny::numericInput(
+      shiny::selectInput(
         ns("window"),
-        "Rolling window (trading days)",
-        value = 63, min = 21, max = 252, step = 21
+        "Rolling window",
+        choices  = c("1 month (21 days)"   = 21,
+                     "1 quarter (63 days)" = 63,
+                     "6 months (126 days)" = 126,
+                     "1 year (252 days)"   = 252),
+        selected = 63
       ),
       shiny::selectInput(ns("pair_a"), "Cross-market — Hedge Asset (Y)", choices = NULL),
       shiny::selectInput(ns("pair_b"), "Cross-market — Hedging Instrument (X)", choices = NULL),
@@ -41,16 +45,17 @@ mod_hedge_ratios_ui <- function(id) {
     bslib::card(
       fill = TRUE,
       bslib::card_header(
-        "Hedge Ratio Dynamics — rolling OLS beta (price levels)"
+        "Hedge Ratio Dynamics — rolling OLS beta (log returns, minimum-variance)"
       ),
       bslib::navset_tab(
         bslib::nav_panel(
           "Cross-Market Beta",
           plotly::plotlyOutput(ns("cross_beta"), height = "calc(100% - 2.8rem)"),
           shiny::tags$p(
-            "Beta (left axis): units of Market B needed to hedge 1 unit of Market A.
-             R\u00b2 (right axis, 0\u20131): fraction of Market A\u2019s variance explained by the hedge \u2014
-             a low R\u00b2 means the hedge is unreliable even if beta looks stable.",
+            "Beta (left axis): minimum-variance hedge ratio estimated on log returns \u2014 units of Market B to hedge 1 unit of A.
+             R\u00b2 (right axis, 0\u20131): fraction of A\u2019s return variance explained by the hedge.
+             Basis risk % (right axis, green): residual vol as a % of total \u2014 the unhedgeable component.
+             Low R\u00b2 + high basis risk = hedge may not work even if beta is stable.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         ),
@@ -75,7 +80,10 @@ mod_hedge_ratios_ui <- function(id) {
 #' @noRd
 #' @importFrom shiny moduleServer reactive observe req updateSelectInput
 #' @importFrom dplyr filter arrange mutate group_by ungroup select inner_join rename
-#' @importFrom slider slide2_dbl
+#' @importFrom tidyr pivot_wider
+#' @importFrom slider slide2_dbl slide_dbl
+#' @importFrom stats lm coef residuals sd complete.cases
+#' @importFrom grDevices hcl
 #' @importFrom plotly plot_ly layout renderPlotly add_trace
 mod_hedge_ratios_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
@@ -120,19 +128,27 @@ mod_hedge_ratios_server <- function(id, r) {
       )
     }
 
-    # Front-month prices in wide format
+    # Front-month LOG RETURNS in wide format.
+    # OLS on price levels is spurious for non-stationary series.
+    # Minimum-variance hedge ratio is estimated on returns: β = ρ(σ_y/σ_x).
     front_wide <- reactive({
       req(!is.null(r$data), r$selected_markets, r$date_range)
-      r$data |>
+      prices <- r$data |>
         dplyr::filter(
           market   %in% r$selected_markets,
           contract == 1L,
           date     >= r$date_range[1],
           date     <= r$date_range[2]
         ) |>
-        dplyr::select(date, market, value) |>
-        tidyr::pivot_wider(names_from = market, values_from = value) |>
+        dplyr::arrange(market, date) |>
+        dplyr::group_by(market) |>
+        dplyr::mutate(log_ret = c(NA_real_, diff(log(value)))) |>
+        dplyr::ungroup() |>
+        dplyr::filter(!is.na(log_ret)) |>
+        dplyr::select(date, market, log_ret) |>
+        tidyr::pivot_wider(names_from = market, values_from = log_ret) |>
         dplyr::arrange(date)
+      prices
     })
 
     # Cross-market rolling beta
@@ -151,15 +167,27 @@ mod_hedge_ratios_server <- function(id, r) {
       ) |>
         dplyr::filter(!is.na(y), !is.na(x)) |>
         dplyr::mutate(
-          beta = rolling_beta(y, x, win),
-          r2   = rolling_r2(y, x, win)
+          beta    = rolling_beta(y, x, win),
+          r2      = rolling_r2(y, x, win),
+          # Basis risk = SD of residual / SD of Y — the unhedgeable fraction
+          res_sd  = slider::slide2_dbl(y, x,
+            function(.y, .x) {
+              sub <- data.frame(y = .y, x = .x)
+              sub <- sub[stats::complete.cases(sub), ]
+              if (nrow(sub) < 10L) return(NA_real_)
+              stats::sd(stats::residuals(stats::lm(y ~ x, data = sub)))
+            },
+            .before = win - 1L, .complete = TRUE),
+          y_sd    = slider::slide_dbl(y, ~ stats::sd(.x, na.rm = TRUE),
+                      .before = win - 1L, .complete = TRUE),
+          basis_pct = res_sd / y_sd * 100
         )
 
       plotly::plot_ly(
         data = df_yx, x = ~date, y = ~beta,
         type = "scatter", mode = "lines",
         name = "Beta",
-        line = list(color = "#e74c3c"),
+        line = list(color = alert_color),
         hovertemplate = "%{x|%Y-%m-%d}<br>Beta: %{y:.3f}<extra></extra>"
       ) |>
         plotly::add_trace(
@@ -176,12 +204,22 @@ mod_hedge_ratios_server <- function(id, r) {
           line  = list(color = "#2980b9", dash = "dot"),
           hovertemplate = "%{x|%Y-%m-%d}<br>R\u00b2: %{y:.3f}<extra></extra>"
         ) |>
+        plotly::add_trace(
+          data  = df_yx, x = ~date, y = ~basis_pct,
+          type  = "scatter", mode = "lines",
+          name  = "Basis risk %",
+          yaxis = "y3",
+          line  = list(color = "#27ae60", dash = "dashdot", width = 1.2),
+          hovertemplate = "%{x|%Y-%m-%d}<br>Basis risk: %{y:.1f}% of \u03c3<sub>Y</sub><extra></extra>"
+        ) |>
         plotly::layout(
-          title  = paste0("Hedge ratio: ", a, " (Y) ~ ", b, " (X), ", win, "-day window"),
-          xaxis  = list(title = "Date"),
-          yaxis  = list(title = "Beta (hedge ratio)"),
+          title  = paste0("Hedge ratio (log returns): ", a, " ~ ", b, ", ", win, "-day window"),
+          xaxis  = list(title = "Date", domain = c(0, 0.88)),
+          yaxis  = list(title = "Beta (min-var hedge ratio)"),
           yaxis2 = list(title = "R\u00b2", overlaying = "y", side = "right",
-                        range = c(0, 1), showgrid = FALSE),
+                        range = c(0, 1), showgrid = FALSE, anchor = "x"),
+          yaxis3 = list(title = "Basis risk (%)", overlaying = "y", side = "right",
+                        showgrid = FALSE, anchor = "free", position = 0.93),
           legend = list(orientation = "h", y = -0.2)
         )
     })
@@ -200,28 +238,39 @@ mod_hedge_ratios_server <- function(id, r) {
           date   <= r$date_range[2]
         )
 
-      c1 <- mkt_data |>
-        dplyr::filter(contract == 1L) |>
-        dplyr::select(date, c1_price = value)
+      # Use log returns for stationarity; compute for each contract separately.
+      log_ret_for <- function(contract_n) {
+        mkt_data |>
+          dplyr::filter(contract == contract_n) |>
+          dplyr::arrange(date) |>
+          dplyr::mutate(ret = c(NA_real_, diff(log(value)))) |>
+          dplyr::filter(!is.na(ret)) |>
+          dplyr::select(date, ret)
+      }
+
+      c1 <- log_ret_for(1L) |> dplyr::rename(c1_ret = ret)
 
       p <- plotly::plot_ly()
 
       for (cn in seq(2L, max_c)) {
-        cn_data <- mkt_data |>
-          dplyr::filter(contract == cn) |>
-          dplyr::select(date, cn_price = value) |>
+        cn_data <- log_ret_for(cn) |>
+          dplyr::rename(cn_ret = ret) |>
           dplyr::inner_join(c1, by = "date") |>
           dplyr::arrange(date) |>
-          dplyr::mutate(beta = rolling_beta(c1_price, cn_price, win)) |>
+          dplyr::mutate(beta = rolling_beta(c1_ret, cn_ret, win)) |>
           dplyr::filter(!is.na(beta))
 
         if (nrow(cn_data) == 0L) next
 
+        col <- if (cn <= 6L) {
+          grDevices::hcl(h = (cn - 2L) * 40, c = 80, l = 45)
+        } else "#888888"
         p <- plotly::add_trace(
           p,
           data = cn_data, x = ~date, y = ~beta,
           type = "scatter", mode = "lines",
           name = paste0("C1 vs C", cn),
+          line = list(color = col),
           hovertemplate = paste0("C1 vs C", cn,
                                  "<br>%{x|%Y-%m-%d}<br>Beta: %{y:.3f}<extra></extra>")
         )
@@ -229,7 +278,7 @@ mod_hedge_ratios_server <- function(id, r) {
 
       plotly::layout(
         p,
-        title  = paste0(mkt, " — term-structure hedge ratios (C1 as hedge asset)"),
+        title  = paste0(mkt, " — term-structure hedge ratios (log returns, C1 as Y)"),
         xaxis  = list(title = "Date"),
         yaxis  = list(title = "Beta"),
         legend = list(orientation = "h", y = -0.2)

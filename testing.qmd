@@ -31,6 +31,18 @@ library(broom)
 
 ---
 
+## 1.1 Feather File Check
+
+```{r}
+test <- arrow::read_feather(here::here("inst/extdata/futures_data.feather"))
+tes1 <- arrow::read_feather((here::here("inst/extdata/cmt_data.feather")))
+
+# All unique tickers in RTL::dflong
+unique(sub("[0-9]+$", "", RTL::dflong$series))
+```
+
+---
+
 ## 2. Data Loading
 
 ### 2.1 RTL Futures Data (`fct_load_futures_data`)
@@ -716,6 +728,228 @@ p_ts |>
     xaxis  = list(title = "Date"),
     yaxis  = list(title = "Beta"),
     legend = list(orientation = "h", y = -0.25)
+  )
+```
+
+---
+
+## 8. Cushing Storage vs WTI Calendar Spread
+
+Cushing storage utilization is the fundamental driver of WTI curve shape.
+When tanks are nearly full, holders pay a premium to store barrels in deferred
+contracts → **contango** (negative C1-C2 spread).
+When storage is tight, nearby barrels command a scarcity premium → **backwardation**
+(positive C1-C2 spread).
+
+`RTL::cushing$storage` gives us weekly EIA storage data from 2011 with
+utilization (stocks / capacity) pre-calculated.
+
+```{r}
+storage <- RTL::cushing$storage |>
+  select(date, utilization, c1c2) |>
+  arrange(date)
+
+cat("Storage date range:", format(min(storage$date)), "→", format(max(storage$date)), "\n")
+cat("Rows:", nrow(storage), "\n")
+head(storage)
+```
+
+```{r}
+# Dual-axis chart: utilization (left) vs C1-C2 spread (right)
+plot_ly() |>
+  add_trace(
+    data          = storage,
+    x             = ~date,
+    y             = ~utilization,
+    type          = "scatter",
+    mode          = "lines",
+    name          = "Cushing utilization",
+    fill          = "tozeroy",
+    fillcolor      = "rgba(41,128,185,0.12)",
+    line          = list(color = "#2980b9", width = 1.5),
+    hovertemplate = "%{x|%Y-%m-%d}<br>Utilization: %{y:.1%}<extra></extra>"
+  ) |>
+  add_trace(
+    data          = storage,
+    x             = ~date,
+    y             = ~c1c2,
+    type          = "scatter",
+    mode          = "lines",
+    name          = "C1–C2 spread ($/bbl)",
+    yaxis         = "y2",
+    line          = list(color = "#e74c3c", width = 1.5),
+    hovertemplate = "%{x|%Y-%m-%d}<br>C1–C2: $%{y:.2f}<extra></extra>"
+  ) |>
+  add_trace(
+    x = range(storage$date), y = c(0, 0),
+    type = "scatter", mode = "lines",
+    yaxis = "y2",
+    line = list(color = "grey", dash = "dot", width = 1),
+    showlegend = FALSE, hoverinfo = "skip"
+  ) |>
+  layout(
+    title  = "Cushing Storage Utilization vs WTI Calendar Spread (C1–C2)",
+    xaxis  = list(title = "Date"),
+    yaxis  = list(title = "Storage Utilization", tickformat = ".0%",
+                  range = c(0.4, 1.0)),
+    yaxis2 = list(title = "C1–C2 Spread ($/bbl)", overlaying = "y",
+                  side = "right", showgrid = FALSE, zeroline = FALSE),
+    legend = list(orientation = "h", y = -0.2),
+    hovermode = "x unified"
+  )
+```
+
+---
+
+## 9. EIA Inventory Stocks — All Markets
+
+`RTL::eiaStocks` bundles four weekly EIA inventory series that map directly
+to our markets:
+
+| Series | Market | Unit |
+|---|---|---|
+| `CrudeCushing` | CL / HTT | Thousand barrels |
+| `NGLower48` | NG | Bcf |
+| `ULSD` | HO | Thousand barrels |
+| `Gasoline` | RB | Thousand barrels |
+
+For a Risk Manager, the key question is not the absolute stock level but
+**how it compares to the seasonal norm** — the 5-year average for the same
+week of the year. A deficit going into peak demand season drives prices up;
+a surplus caps them.
+
+### 9.1 Data Overview
+
+```{r}
+stocks <- RTL::eiaStocks |>
+  dplyr::arrange(series, date)
+
+# Date range, row count, and latest value per series
+stocks |>
+  dplyr::group_by(series) |>
+  dplyr::summarise(
+    from   = min(date),
+    to     = max(date),
+    rows   = dplyr::n(),
+    latest = dplyr::last(value),
+    .groups = "drop"
+  )
+```
+
+### 9.2 Stocks vs 5-Year Seasonal Average
+
+The 5-year average is computed per calendar week using only the prior 5 years
+(no look-ahead), matching the EIA's own published methodology.
+The surplus/deficit column shows how many units above or below the seasonal
+norm inventories sit today.
+
+```{r}
+stocks_norm <- stocks |>
+  dplyr::mutate(
+    week = lubridate::week(date),
+    year = lubridate::year(date)
+  ) |>
+  dplyr::group_by(series, week) |>
+  dplyr::mutate(
+    five_yr_avg     = slider::slide_index_dbl(
+      value, year,
+      ~ mean(.x, na.rm = TRUE),
+      .before = 5L, .after = -1L
+    ),
+    surplus_deficit = value - five_yr_avg
+  ) |>
+  dplyr::ungroup()
+
+# Spot check latest reading per series
+stocks_norm |>
+  dplyr::group_by(series) |>
+  dplyr::slice_tail(n = 1) |>
+  dplyr::select(series, date, value, five_yr_avg, surplus_deficit)
+```
+
+### 9.3 NG Storage vs 5-Year Average
+
+Natural Gas is the most storage-sensitive market in the complex. The EIA
+reports working gas in storage every Thursday. A deficit vs the 5-year
+average heading into the November–March heating season is the primary
+fundamental driver of NG price rallies.
+
+```{r}
+# Drop rows where the 5-yr average hasn't warmed up yet (first ~5 years)
+ng_stocks <- dplyr::filter(stocks_norm, series == "NGLower48",
+                            !is.na(five_yr_avg))
+
+plotly::plot_ly() |>
+  plotly::add_trace(
+    data = ng_stocks, x = ~date, y = ~five_yr_avg,
+    type = "scatter", mode = "lines", name = "5-yr avg",
+    line = list(color = "grey", dash = "dash", width = 1.5),
+    hovertemplate = "%{x|%Y-%m-%d}<br>5-yr avg: %{y:.0f} Bcf<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = ng_stocks, x = ~date, y = ~value,
+    type = "scatter", mode = "lines", name = "Actual",
+    line = list(color = "#e74c3c", width = 2),
+    hovertemplate = "%{x|%Y-%m-%d}<br>Actual: %{y:.0f} Bcf<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = ng_stocks, x = ~date, y = ~surplus_deficit,
+    type = "bar", name = "Surplus / Deficit vs 5-yr avg",
+    yaxis = "y2",
+    marker = list(
+      color = dplyr::case_when(
+        ng_stocks$surplus_deficit >= 0 ~ "rgba(39,174,96,0.5)",
+        TRUE                           ~ "rgba(192,57,43,0.5)"
+      )
+    ),
+    hovertemplate = "%{x|%Y-%m-%d}<br>+/- 5yr: %{y:.0f} Bcf<extra></extra>"
+  ) |>
+  plotly::layout(
+    title     = "NG Lower 48 Working Gas in Storage vs 5-Year Average",
+    xaxis     = list(title = ""),
+    yaxis     = list(title = "Working Gas (Bcf)"),
+    yaxis2    = list(title = "Surplus / Deficit (Bcf)", overlaying = "y",
+                     side = "right", showgrid = FALSE, zeroline = TRUE),
+    hovermode = "x unified",
+    legend    = list(orientation = "h", y = -0.2)
+  )
+```
+
+### 9.4 Petroleum Products — ULSD and Gasoline vs 5-Year Average
+
+```{r}
+prod_stocks <- dplyr::filter(stocks_norm, series %in% c("ULSD", "Gasoline"),
+                              !is.na(five_yr_avg))
+
+plotly::plot_ly() |>
+  plotly::add_trace(
+    data = dplyr::filter(prod_stocks, series == "ULSD"),
+    x = ~date, y = ~surplus_deficit,
+    type = "scatter", mode = "lines",
+    name = "ULSD surplus/deficit (HO proxy)",
+    line = list(color = "#e67e22", width = 1.5),
+    hovertemplate = "ULSD<br>%{x|%Y-%m-%d}<br>+/- 5yr: %{y:.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = dplyr::filter(prod_stocks, series == "Gasoline"),
+    x = ~date, y = ~surplus_deficit,
+    type = "scatter", mode = "lines",
+    name = "Gasoline surplus/deficit (RB proxy)",
+    line = list(color = "#8e44ad", width = 1.5),
+    hovertemplate = "Gasoline<br>%{x|%Y-%m-%d}<br>+/- 5yr: %{y:.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    x = range(prod_stocks$date), y = c(0, 0),
+    type = "scatter", mode = "lines",
+    line = list(color = "grey", dash = "dot", width = 1),
+    showlegend = FALSE, hoverinfo = "skip"
+  ) |>
+  plotly::layout(
+    title     = "US Product Stocks vs 5-Year Seasonal Average (Thousand Barrels)",
+    xaxis     = list(title = ""),
+    yaxis     = list(title = "Surplus / Deficit vs 5-yr avg (Mbbl)"),
+    hovermode = "x unified",
+    legend    = list(orientation = "h", y = -0.2)
   )
 ```
 

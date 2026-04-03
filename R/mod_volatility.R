@@ -21,8 +21,10 @@ mod_volatility_ui <- function(id) {
       bslib::card_header("Settings"),
       shiny::selectInput(
         ns("window"),
-        "Rolling window (trading days)",
-        choices  = c("21 days" = 21, "42 days" = 42, "63 days" = 63),
+        "Rolling window",
+        choices  = c("1 month (21 days)"   = 21,
+                     "2 months (42 days)"  = 42,
+                     "1 quarter (63 days)" = 63),
         selected = 21
       ),
       shiny::selectInput(
@@ -55,6 +57,17 @@ mod_volatility_ui <- function(id) {
              horizontal red bands mark market-wide stress events.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
+        ),
+        bslib::nav_panel(
+          "Vol Cone",
+          plotly::plotlyOutput(ns("vol_cone"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Historical distribution of realized vol at each lookback horizon (10d to 252d).
+             The box spans the 25th\u201375th percentile; whiskers show 10th\u201390th.
+             The red dot is current realized vol at each horizon.
+             Current vol above the 75th percentile = elevated regime; above the 90th = stress.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         )
       )
     )
@@ -66,13 +79,24 @@ mod_volatility_ui <- function(id) {
 #' @param id Shiny module id.
 #' @param r Shared \code{reactiveValues} environment.
 #' @noRd
-#' @importFrom shiny moduleServer reactive req
-#' @importFrom dplyr filter arrange mutate group_by ungroup select
+#' @importFrom shiny moduleServer reactive req observe isolate updateSelectInput
+#' @importFrom dplyr filter arrange mutate group_by ungroup select bind_rows
 #' @importFrom tidyr pivot_wider
 #' @importFrom slider slide_dbl
+#' @importFrom stats sd quantile
+#' @importFrom utils tail
 #' @importFrom plotly plot_ly add_trace layout renderPlotly
 mod_volatility_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
+
+    # Keep vol surface dropdown in sync with selected markets
+    shiny::observe({
+      mkts <- setdiff(r$selected_markets, "CMT")
+      shiny::req(length(mkts) > 0L)
+      cur <- isolate(input$surface_market)
+      sel <- if (!is.null(cur) && cur %in% mkts) cur else mkts[1]
+      shiny::updateSelectInput(session, "surface_market", choices = mkts, selected = sel)
+    })
 
     # Reactive: log returns for front-month contracts of selected markets
     front_returns <- reactive({
@@ -108,11 +132,13 @@ mod_volatility_server <- function(id, r) {
       p <- plotly::plot_ly()
       for (mkt in unique(df$market)) {
         sub <- dplyr::filter(df, market == mkt, !is.na(roll_vol))
+        col <- market_colors[mkt] %||% "#888888"
         p <- plotly::add_trace(
           p,
           data = sub, x = ~date, y = ~roll_vol,
           type = "scatter", mode = "lines",
           name = mkt,
+          line = list(color = col),
           hovertemplate = "%{x|%Y-%m-%d}<br>Ann. Vol: %{y:.1%}<extra></extra>"
         )
       }
@@ -128,7 +154,7 @@ mod_volatility_server <- function(id, r) {
           y    = c(threshold, threshold),
           type = "scatter", mode = "lines",
           name = "80th pctile (regime)",
-          line = list(color = "#e74c3c", dash = "dash", width = 1.5),
+          line = list(color = alert_color, dash = "dash", width = 1.5),
           hoverinfo = "skip"
         )
       }
@@ -196,6 +222,84 @@ mod_volatility_server <- function(id, r) {
           xaxis = list(title = "Date"),
           yaxis = list(title = "Contract #"),
           title = paste0(mkt, " Volatility Surface")
+        )
+    })
+
+    # Vol cone: historical vol distribution by lookback horizon
+    output$vol_cone <- plotly::renderPlotly({
+      req(!is.null(r$data), r$date_range)
+      mkt         <- input$surface_market
+      horizons    <- c(10L, 21L, 63L, 126L, 252L)
+      horizon_lbl <- c("10d", "21d", "63d", "126d", "252d")
+
+      front_data <- r$data |>
+        dplyr::filter(market == mkt, contract == 1L,
+                      date >= r$date_range[1], date <= r$date_range[2]) |>
+        dplyr::arrange(date) |>
+        dplyr::mutate(log_ret = c(NA_real_, diff(log(value)))) |>
+        dplyr::filter(!is.na(log_ret))
+
+      req(nrow(front_data) > 252L)
+
+      rets <- front_data$log_ret
+
+      # For each horizon compute: full-history distribution + current value
+      cone_rows <- lapply(seq_along(horizons), function(i) {
+        h    <- horizons[i]
+        vols <- slider::slide_dbl(rets, ~ stats::sd(.x, na.rm = TRUE) * sqrt(252),
+                  .before = h - 1L, .complete = TRUE)
+        vols <- vols[!is.na(vols)]
+        cur  <- utils::tail(vols, 1L)
+        data.frame(
+          horizon = horizon_lbl[i],
+          h_days  = h,
+          p10     = stats::quantile(vols, 0.10),
+          p25     = stats::quantile(vols, 0.25),
+          p50     = stats::quantile(vols, 0.50),
+          p75     = stats::quantile(vols, 0.75),
+          p90     = stats::quantile(vols, 0.90),
+          current = cur
+        )
+      })
+      cone_df <- dplyr::bind_rows(cone_rows)
+
+      col <- market_colors[mkt] %||% "#2980b9"
+
+      plotly::plot_ly(data = cone_df, x = ~horizon) |>
+        # 10th-90th whisker (invisible lower)
+        plotly::add_trace(y = ~p10, type = "scatter", mode = "lines",
+          line = list(color = "transparent"), showlegend = FALSE,
+          hoverinfo = "skip", name = "_p10") |>
+        plotly::add_trace(y = ~p90, type = "scatter", mode = "lines",
+          fill = "tonexty", fillcolor = "rgba(150,150,150,0.15)",
+          line = list(color = "transparent"), showlegend = FALSE,
+          name = "10th\u201390th pctile",
+          hovertemplate = "10th\u201390th: %{y:.1%}<extra></extra>") |>
+        # 25th-75th box (invisible lower)
+        plotly::add_trace(y = ~p25, type = "scatter", mode = "lines",
+          line = list(color = "transparent"), showlegend = FALSE,
+          hoverinfo = "skip", name = "_p25") |>
+        plotly::add_trace(y = ~p75, type = "scatter", mode = "lines",
+          fill = "tonexty", fillcolor = "rgba(100,100,200,0.25)",
+          line = list(color = "transparent"), showlegend = FALSE,
+          name = "25th\u201375th pctile",
+          hovertemplate = "25th\u201375th: %{y:.1%}<extra></extra>") |>
+        # Median line
+        plotly::add_trace(y = ~p50, type = "scatter", mode = "lines+markers",
+          line = list(color = "#555"), name = "Median",
+          hovertemplate = "Median: %{y:.1%}<extra></extra>") |>
+        # Current vol dot
+        plotly::add_trace(y = ~current, type = "scatter", mode = "markers",
+          marker = list(color = alert_color, size = 10, symbol = "circle"),
+          name = "Current",
+          hovertemplate = "Current: %{y:.1%}<extra></extra>") |>
+        plotly::layout(
+          title  = paste0(mkt, " Vol Cone — front-month realized vol by lookback horizon"),
+          xaxis  = list(title = "Lookback horizon",
+                        categoryorder = "array",
+                        categoryarray = horizon_lbl),
+          yaxis  = list(title = "Annualised Vol", tickformat = ".0%"),
+          legend = list(orientation = "h", y = -0.2)
         )
     })
 

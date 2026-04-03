@@ -2,7 +2,8 @@
 #'
 #' @param input,output,session Internal parameters for \code{{shiny}}.
 #' @noRd
-#' @importFrom shiny reactiveValues observe req showNotification removeNotification
+#' @importFrom shiny reactiveValues observe req showNotification removeNotification observeEvent
+#' @importFrom shinyjs hide show
 app_server <- function(input, output, session) {
 
   # ---------------------------------------------------------------------------
@@ -16,9 +17,9 @@ app_server <- function(input, output, session) {
     date_range       = c(as.Date("2007-01-01"), Sys.Date())
   )
 
-  # Hide the selector bar on Overview (it has no effect there)
+  # Hide the selector bar on Overview and Briefing (no selector effect there)
   shiny::observeEvent(input$main_tabs, {
-    if (isTRUE(input$main_tabs == "Overview")) {
+    if (isTRUE(input$main_tabs %in% c("Overview", "Briefing"))) {
       shinyjs::hide("selector_bar")
     } else {
       shinyjs::show("selector_bar")
@@ -41,6 +42,7 @@ app_server <- function(input, output, session) {
   # Module servers
   mod_market_selector_server("selector", r)
   mod_market_overview_server("overview", r)
+  mod_cross_market_server("briefing",    r)
   mod_forward_curve_server("fc",         r)
   mod_volatility_server("vol",           r)
   mod_codynamics_server("codyn",         r)

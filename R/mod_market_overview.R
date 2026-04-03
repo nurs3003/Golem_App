@@ -250,23 +250,25 @@ mod_market_overview_server <- function(id, r) {
           dplyr::filter(market == mkt, contract == 1L) |>
           dplyr::arrange(date)
 
-        n       <- nrow(mkt_data)
-        latest  <- mkt_data$value[n]
+        n          <- nrow(mkt_data)
+        latest     <- mkt_data$value[n]
+        latest_dt  <- mkt_data$date[n]
 
-        pct_chg <- function(days_back) {
-          idx <- n - days_back
-          if (idx < 1L) return(NA_real_)
-          round((latest / mkt_data$value[idx] - 1) * 100, 2)
+        # Use calendar-date lookups so data gaps don't corrupt the % change.
+        price_at <- function(target_date) {
+          sub <- mkt_data[mkt_data$date <= target_date, ]
+          if (nrow(sub) == 0L) return(NA_real_)
+          sub$value[nrow(sub)]
         }
 
         data.frame(
           Market    = paste0(info$name, " (", mkt, ")"),
           Unit      = info$unit,
           Price     = round(latest, 2),
-          `1D %`    = pct_chg(1L),
-          `1W %`    = pct_chg(5L),
-          `1M %`    = pct_chg(21L),
-          `1Y %`    = pct_chg(252L),
+          `1D %`    = round((latest / price_at(latest_dt - 1L)  - 1) * 100, 2),
+          `1W %`    = round((latest / price_at(latest_dt - 7L)  - 1) * 100, 2),
+          `1M %`    = round((latest / price_at(latest_dt - 30L) - 1) * 100, 2),
+          `1Y %`    = round((latest / price_at(latest_dt - 365L)- 1) * 100, 2),
           check.names = FALSE
         )
       }) |> dplyr::bind_rows()

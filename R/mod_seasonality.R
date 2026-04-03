@@ -61,6 +61,7 @@ mod_seasonality_ui <- function(id) {
 #' @importFrom dplyr filter arrange mutate group_by ungroup summarise
 #' @importFrom lubridate month year yday
 #' @importFrom stats quantile
+#' @importFrom utils head
 #' @importFrom plotly plot_ly layout renderPlotly add_trace
 mod_seasonality_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
@@ -100,6 +101,7 @@ mod_seasonality_server <- function(id, r) {
       for (mkt in unique(avg_df$market)) {
         sub <- dplyr::filter(avg_df, market == mkt) |>
           dplyr::arrange(month)
+        col <- market_colors[mkt] %||% "#888888"
         p <- plotly::add_trace(
           p,
           data          = sub,
@@ -107,6 +109,7 @@ mod_seasonality_server <- function(id, r) {
           y             = ~avg_ret,
           type          = "bar",
           name          = mkt,
+          marker        = list(color = col),
           hovertemplate = "%{x}: %{y:.2%}<extra></extra>"
         )
       }
@@ -132,13 +135,16 @@ mod_seasonality_server <- function(id, r) {
       p <- plotly::plot_ly()
       for (mkt in unique(df$market)) {
         sub <- dplyr::filter(df, market == mkt)
+        col <- market_colors[mkt] %||% "#888888"
         p <- plotly::add_trace(
           p,
-          data = sub,
-          x    = ~month_lbl,
-          y    = ~log_ret,
-          type = "box",
-          name = mkt,
+          data   = sub,
+          x      = ~month_lbl,
+          y      = ~log_ret,
+          type   = "box",
+          name   = mkt,
+          marker = list(color = col),
+          line   = list(color = col),
           hovertemplate = "%{x}<br>%{y:.2%}<extra></extra>"
         )
       }
@@ -168,19 +174,22 @@ mod_seasonality_server <- function(id, r) {
         dplyr::mutate(cum_ret = cumsum(log_ret)) |>
         dplyr::ungroup()
 
-      # Palette: one colour per market
-      palette   <- c("#2980b9", "#e74c3c", "#27ae60", "#8e44ad", "#e67e22", "#2c3e50")
-      fill_rgba <- c("rgba(41,128,185,0.18)", "rgba(231,76,60,0.18)",
-                     "rgba(39,174,96,0.18)",  "rgba(142,68,173,0.18)",
-                     "rgba(230,126,34,0.18)", "rgba(44,62,80,0.18)")
       mkts <- unique(df_yoy$market)
+
+      # hex -> rgba helper for IQR band fill
+      hex_to_rgba <- function(hex, alpha = 0.18) {
+        r <- strtoi(substr(hex, 2, 3), 16L)
+        g <- strtoi(substr(hex, 4, 5), 16L)
+        b <- strtoi(substr(hex, 6, 7), 16L)
+        sprintf("rgba(%d,%d,%d,%.2f)", r, g, b, alpha)
+      }
 
       p <- plotly::plot_ly()
 
       for (i in seq_along(mkts)) {
         mkt      <- mkts[i]
-        col      <- palette[(i - 1L) %% length(palette) + 1L]
-        fill_col <- fill_rgba[(i - 1L) %% length(fill_rgba) + 1L]
+        col      <- market_colors[mkt] %||% "#888888"
+        fill_col <- hex_to_rgba(col)
         mkt_df   <- dplyr::filter(df_yoy, market == mkt)
 
         # Historical IQR by day-of-year (all years before current)
@@ -232,10 +241,20 @@ mod_seasonality_server <- function(id, r) {
         }
       }
 
+      # Month-boundary tick marks so "day of year" is human-readable
+      month_starts <- c(1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335)
+      month_abbr   <- c("Jan","Feb","Mar","Apr","May","Jun",
+                        "Jul","Aug","Sep","Oct","Nov","Dec")
+
       plotly::layout(p,
         title     = paste0("Year-over-Year \u2014 ", current_year,
                            " cumulative return vs historical IQR"),
-        xaxis     = list(title = "Day of Year"),
+        xaxis     = list(
+          title       = "",
+          tickvals    = month_starts,
+          ticktext    = month_abbr,
+          tickangle   = 0
+        ),
         yaxis     = list(title = "Cumulative Log Return", tickformat = ".1%"),
         hovermode = "x unified",
         legend    = list(orientation = "h", y = -0.2)

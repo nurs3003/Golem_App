@@ -57,32 +57,35 @@ mod_codynamics_ui <- function(id) {
           )
         ),
         bslib::nav_panel(
-          "PCA",
+          "Factor Analysis",
           # Top row: scree (left) + loadings (right)
           bslib::layout_columns(
             col_widths = c(5, 7),
             shiny::div(
               plotly::plotlyOutput(ns("pca_scree"), height = "260px"),
               shiny::tags$p(
-                "PC1 capturing >60% of variance signals a single dominant factor (global demand risk).
-                 More PCs needed = more idiosyncratic market behaviour.",
+                "How many independent risk factors drive these markets?
+                 F1 capturing >60% of variance means one dominant factor (broad energy complex / macro demand) moves all markets together.
+                 More factors needed = more markets moving for their own reasons.",
                 style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
               )
             ),
             shiny::div(
               plotly::plotlyOutput(ns("pca_loadings"), height = "260px"),
               shiny::tags$p(
-                "Same-sign loadings on PC1 = all markets respond to the same factor.
-                 PC2 often isolates Natural Gas (weather-driven) from the oil complex.",
+                "How much does each market contribute to each factor?
+                 Same-sign bars on F1 = all move together with global demand.
+                 F2 typically isolates Natural Gas (weather/power-burn driven) from the oil complex.",
                 style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
               )
             )
           ),
-          # Bottom row: PC1 score time series
+          # Bottom row: F1 score time series
           plotly::plotlyOutput(ns("pca_scores"), height = "200px"),
           shiny::tags$p(
-            "PC1 score tracks the dominant co-movement factor daily. Extreme spikes coincide with
-             demand shocks (COVID Mar 2020) or supply disruptions (Russia-Ukraine Feb 2022).",
+            "Daily reading of the dominant factor (F1). Extreme spikes = broad market stress events
+             (COVID demand collapse Mar 2020; Russia-Ukraine supply shock Feb 2022).
+             Use this as a systemic risk barometer across your energy book.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         )
@@ -97,11 +100,11 @@ mod_codynamics_ui <- function(id) {
 #' @param r Shared \code{reactiveValues} environment.
 #' @noRd
 #' @importFrom shiny moduleServer reactive observe req updateSelectInput
-#' @importFrom dplyr filter arrange mutate group_by ungroup select
+#' @importFrom dplyr filter arrange mutate group_by ungroup select inner_join
 #' @importFrom tidyr pivot_wider
 #' @importFrom slider slide_dbl slide2_dbl
 #' @importFrom plotly plot_ly layout renderPlotly add_trace add_bars
-#' @importFrom stats prcomp cor
+#' @importFrom stats prcomp cor complete.cases
 mod_codynamics_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
 
@@ -254,35 +257,42 @@ mod_codynamics_server <- function(id, r) {
       )
     })
 
-    # PCA on the full wide returns matrix (all selected markets)
+    # PCA on the full wide returns matrix (all selected markets).
+    # Returns a list with the prcomp object AND the corresponding dates so
+    # pca_scores does not need to call wide_returns() separately (avoids
+    # a reactive race where row counts can mismatch).
     pca_result <- reactive({
       df <- wide_returns()
       req(nrow(df) > 10L)
-      mat <- as.matrix(df[, -1, drop = FALSE])
-      # Drop columns with too many NAs, then complete cases only
+      mat     <- as.matrix(df[, -1, drop = FALSE])
       ok_cols <- colMeans(is.na(mat)) < 0.5
       mat     <- mat[, ok_cols, drop = FALSE]
-      mat     <- mat[complete.cases(mat), , drop = FALSE]
+      ok_rows <- stats::complete.cases(mat)
+      mat     <- mat[ok_rows, , drop = FALSE]
       req(nrow(mat) > 10L, ncol(mat) >= 2L)
-      stats::prcomp(mat, center = TRUE, scale. = TRUE)
+      list(
+        pca   = stats::prcomp(mat, center = TRUE, scale. = TRUE),
+        dates = df$date[ok_rows]
+      )
     })
 
     output$pca_scree <- plotly::renderPlotly({
-      pca <- pca_result()
+      res     <- pca_result()
+      pca     <- res$pca
       var_exp <- pca$sdev^2 / sum(pca$sdev^2) * 100
       n_pcs   <- length(var_exp)
       cum_var <- cumsum(var_exp)
 
       plotly::plot_ly() |>
         plotly::add_bars(
-          x = paste0("PC", seq_len(n_pcs)),
+          x = paste0("F", seq_len(n_pcs)),
           y = var_exp,
           name = "Explained",
           marker = list(color = "#2980b9"),
           hovertemplate = "%{x}: %{y:.1f}%<extra></extra>"
         ) |>
         plotly::add_trace(
-          x    = paste0("PC", seq_len(n_pcs)),
+          x    = paste0("F", seq_len(n_pcs)),
           y    = cum_var,
           type = "scatter", mode = "lines+markers",
           name = "Cumulative",
@@ -291,7 +301,7 @@ mod_codynamics_server <- function(id, r) {
           hovertemplate = "%{x}: %{y:.1f}%<extra></extra>"
         ) |>
         plotly::layout(
-          title  = "Scree Plot",
+          title  = "Factor Importance — variance explained by each factor",
           xaxis  = list(title = ""),
           yaxis  = list(title = "Variance explained (%)"),
           yaxis2 = list(title = "Cumulative (%)", overlaying = "y", side = "right",
@@ -302,7 +312,7 @@ mod_codynamics_server <- function(id, r) {
     })
 
     output$pca_loadings <- plotly::renderPlotly({
-      pca <- pca_result()
+      pca <- pca_result()$pca
       rot <- pca$rotation[, 1:min(3L, ncol(pca$rotation)), drop = FALSE]
       markets <- rownames(rot)
 
@@ -310,14 +320,14 @@ mod_codynamics_server <- function(id, r) {
         plotly::add_bars(
           x    = markets,
           y    = rot[, 1],
-          name = "PC1",
+          name = "F1",
           marker = list(color = "#2980b9"),
           hovertemplate = "%{x}: %{y:.3f}<extra></extra>"
         ) |>
         plotly::add_bars(
           x    = markets,
           y    = rot[, 2],
-          name = "PC2",
+          name = "F2",
           marker = list(color = "#e67e22"),
           hovertemplate = "%{x}: %{y:.3f}<extra></extra>"
         ) |>
@@ -327,7 +337,7 @@ mod_codynamics_server <- function(id, r) {
               p,
               x    = markets,
               y    = rot[, 3],
-              name = "PC3",
+              name = "F3",
               marker = list(color = "#27ae60"),
               hovertemplate = "%{x}: %{y:.3f}<extra></extra>"
             )
@@ -336,7 +346,7 @@ mod_codynamics_server <- function(id, r) {
           }
         }() |>
         plotly::layout(
-          title   = "PC Loadings (first 3 PCs)",
+          title   = "Market Exposures to Each Factor (first 3)",
           barmode = "group",
           xaxis   = list(title = ""),
           yaxis   = list(title = "Loading"),
@@ -345,17 +355,10 @@ mod_codynamics_server <- function(id, r) {
     })
 
     output$pca_scores <- plotly::renderPlotly({
-      df  <- wide_returns()
-      req(nrow(df) > 10L)
-      pca <- pca_result()
-
-      # Re-build the same complete-case matrix used for PCA
-      mat     <- as.matrix(df[, -1, drop = FALSE])
-      ok_cols <- colMeans(is.na(mat)) < 0.5
-      mat     <- mat[, ok_cols, drop = FALSE]
-      ok_rows <- complete.cases(mat)
-      dates   <- df$date[ok_rows]
-      scores  <- pca$x[, 1]   # PC1 score per observation
+      # Use the cached result — dates and pca$x are guaranteed to match.
+      res    <- pca_result()
+      dates  <- res$dates
+      scores <- res$pca$x[, 1]   # F1 score per observation
 
       plotly::plot_ly(
         x    = dates,
@@ -363,12 +366,12 @@ mod_codynamics_server <- function(id, r) {
         type = "scatter",
         mode = "lines",
         line = list(color = "#8e44ad"),
-        hovertemplate = "%{x|%Y-%m-%d}<br>PC1 score: %{y:.3f}<extra></extra>"
+        hovertemplate = "%{x|%Y-%m-%d}<br>F1 score: %{y:.3f}<extra></extra>"
       ) |>
         plotly::layout(
-          title = "PC1 Score — time series (captures dominant co-movement)",
+          title = "F1 Daily Reading — systemic risk barometer across energy markets",
           xaxis = list(title = "Date"),
-          yaxis = list(title = "PC1 score")
+          yaxis = list(title = "F1 score")
         )
     })
 

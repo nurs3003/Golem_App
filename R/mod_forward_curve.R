@@ -1,13 +1,16 @@
 #' forward_curve UI Function
 #'
-#' Shows the term structure (forward curve) for commodity futures and the
-#' yield curve for US Treasuries.  A date slider lets the user compare
-#' the curve shape across three historical snapshots.
+#' Two sub-tabs:
+#' \enumerate{
+#'   \item Commodity Curves — term structure of futures prices.
+#'   \item Yield Curve — US Treasury CMT rates.
+#' }
+#' A date picker and history-overlay toggle are shared across both tabs.
 #'
 #' @param id Shiny module id.
 #' @noRd
 #' @importFrom shiny NS tagList dateInput checkboxInput numericInput
-#' @importFrom bslib layout_columns card card_header
+#' @importFrom bslib layout_columns card card_header navset_tab nav_panel
 #' @importFrom plotly plotlyOutput
 mod_forward_curve_ui <- function(id) {
   ns <- NS(id)
@@ -35,7 +38,38 @@ mod_forward_curve_ui <- function(id) {
       bslib::card_header(
         "Forward Curve — hover to inspect, click legend to toggle markets"
       ),
-      plotly::plotlyOutput(ns("curve_plot"), height = "100%")
+      bslib::navset_tab(
+        bslib::nav_panel(
+          "Commodity Curves",
+          plotly::plotlyOutput(ns("commodity_curve"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Term structure of futures prices by contract month (1 = front month).
+             Upward-sloping = contango (storage costs dominate); downward-sloping = backwardation (spot tightness / convenience yield).
+             Backwardation in crude often signals supply stress. Faded lines show earlier snapshots for comparison.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
+        ),
+        bslib::nav_panel(
+          "Yield Curve",
+          plotly::plotlyOutput(ns("yield_curve"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "US Treasury constant-maturity yields (1M to 30Y). Normal = upward-sloping;
+             inversion (short > long) historically precedes recessions and signals demand
+             destruction risk for energy commodities. Only visible when CMT is selected.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
+        ),
+        bslib::nav_panel(
+          "Roll Yield",
+          plotly::plotlyOutput(ns("roll_yield"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Annualised roll yield = (C1/C2 \u2013 1) \u00d7 12. Positive (backwardation) = you earn by rolling forward;
+             negative (contango) = you pay. In steep contango this cost can exceed 2\u20133%/month \u2014
+             material over a year for any hedger maintaining front-month exposure.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
+        )
+      )
     )
   )
 }
@@ -45,96 +79,195 @@ mod_forward_curve_ui <- function(id) {
 #' @param id Shiny module id.
 #' @param r Shared \code{reactiveValues} environment.
 #' @noRd
-#' @importFrom shiny moduleServer renderText req
-#' @importFrom dplyr filter arrange
+#' @importFrom shiny moduleServer req validate need
+#' @importFrom dplyr filter arrange select mutate inner_join
 #' @importFrom plotly plot_ly add_trace layout renderPlotly
 mod_forward_curve_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
 
-    output$curve_plot <- plotly::renderPlotly({
-      req(r$selected_markets)
+    snap_dates <- shiny::reactive({
       snapshot <- input$snapshot_date
-      req(!is.null(snapshot))
-
-      interval    <- input$history_interval %||% 365
-      show_hist   <- isTRUE(input$show_history)
-      snap_dates  <- if (show_hist) {
+      shiny::req(!is.null(snapshot))
+      interval  <- input$history_interval %||% 365
+      show_hist <- isTRUE(input$show_history)
+      if (show_hist) {
         c(snapshot - 2L * interval, snapshot - interval, snapshot)
       } else {
         snapshot
       }
-      # Opacity ramp: oldest = faintest
-      opacities <- seq(0.3, 1, length.out = length(snap_dates))
+    })
+
+    # ── Commodity term-structure ────────────────────────────────────────────
+    output$commodity_curve <- plotly::renderPlotly({
+      shiny::req(r$selected_markets, !is.null(r$data))
+      dates     <- snap_dates()
+      opacities <- seq(0.3, 1, length.out = length(dates))
+      mkts      <- setdiff(r$selected_markets, "CMT")
+      shiny::req(length(mkts) > 0L)
 
       p <- plotly::plot_ly()
 
-      for (mkt in r$selected_markets) {
+      for (mkt in mkts) {
+        col      <- market_colors[mkt] %||% "#888888"
+        mkt_data <- dplyr::filter(r$data, market == mkt)
 
-        if (mkt == "CMT") {
-          req(!is.null(r$cmt_data))
-          for (i in seq_along(snap_dates)) {
-            d    <- snap_dates[i]
-            snap <- r$cmt_data |>
-              dplyr::filter(date <= d) |>
-              dplyr::filter(date == max(date)) |>
-              dplyr::arrange(maturity_years)
-            if (nrow(snap) == 0L) next
-            p <- plotly::add_trace(
-              p,
-              data   = snap,
-              x      = ~maturity_years,
-              y      = ~value,
-              type   = "scatter",
-              mode   = "lines+markers",
-              name   = paste0("CMT (", format(d, "%Y-%m-%d"), ")"),
-              opacity = opacities[i],
-              hovertemplate = paste0(
-                "Maturity: %{x:.1f}y<br>Yield: %{y:.2f}%<br>Date: ",
-                format(d, "%Y-%m-%d"), "<extra></extra>"
-              )
-            )
+        for (i in seq_along(dates)) {
+          d    <- dates[i]
+          snap <- mkt_data |>
+            dplyr::filter(date <= d) |>
+            dplyr::filter(date == max(date)) |>
+            dplyr::arrange(contract)
+          if (nrow(snap) == 0L) next
+
+          # Contango/backwardation label for most-recent snapshot only.
+          # Compare C1 vs C2 (the most liquid calendar spread), not C1 vs Cmax.
+          curve_label <- ""
+          if (i == length(dates) && nrow(snap) >= 2L) {
+            c1_val <- snap$value[snap$contract == min(snap$contract)]
+            c2_val <- snap$value[snap$contract == sort(snap$contract)[2]]
+            if (length(c1_val) > 0 && length(c2_val) > 0) {
+              if (c2_val > c1_val) {
+                curve_label <- " \u25b2 contango"
+              } else if (c2_val < c1_val) {
+                curve_label <- " \u25bc backwardation"
+              }
+            }
           }
 
-        } else {
-          req(!is.null(r$data))
-          mkt_data <- dplyr::filter(r$data, market == mkt)
-          for (i in seq_along(snap_dates)) {
-            d    <- snap_dates[i]
-            snap <- mkt_data |>
-              dplyr::filter(date <= d) |>
-              dplyr::filter(date == max(date)) |>
-              dplyr::arrange(contract)
-            if (nrow(snap) == 0L) next
-            p <- plotly::add_trace(
-              p,
-              data   = snap,
-              x      = ~contract,
-              y      = ~value,
-              type   = "scatter",
-              mode   = "lines+markers",
-              name   = paste0(mkt, " (", format(d, "%Y-%m-%d"), ")"),
-              opacity = opacities[i],
-              hovertemplate = paste0(
-                "Contract: %{x}<br>Price: %{y:.2f}<br>Date: ",
-                format(d, "%Y-%m-%d"), "<extra></extra>"
-              )
+          p <- plotly::add_trace(
+            p,
+            data      = snap,
+            x         = ~contract,
+            y         = ~value,
+            type      = "scatter",
+            mode      = "lines+markers",
+            name      = paste0(mkt, " (", format(d, "%b %d %Y"), ")", curve_label),
+            opacity   = opacities[i],
+            line      = list(color = col),
+            marker    = list(color = col),
+            hovertemplate = paste0(
+              mkt, " contract %{x}<br>$%{y:.2f}<br>",
+              format(d, "%Y-%m-%d"), "<extra></extra>"
             )
-          }
+          )
         }
       }
 
       plotly::layout(
         p,
-        xaxis      = list(title = "Contract # (futures) / Maturity in years (CMT)"),
-        yaxis      = list(title = "Price / Yield (%)"),
-        legend     = list(orientation = "h", y = -0.2),
-        hovermode  = "x unified",
-        margin     = list(b = 80)
+        xaxis     = list(title = "Contract # (1 = front month)"),
+        yaxis     = list(title = "Futures Price (USD)"),
+        legend    = list(orientation = "h", y = -0.2),
+        hovermode = "x unified"
+      )
+    })
+
+    # ── US Treasury yield curve ─────────────────────────────────────────────
+    output$yield_curve <- plotly::renderPlotly({
+      shiny::validate(
+        shiny::need("CMT" %in% r$selected_markets,
+                    "Select 'CMT – US Treasuries' in the market selector to view the yield curve.")
+      )
+      shiny::req(!is.null(r$cmt_data))
+      dates     <- snap_dates()
+      opacities <- seq(0.3, 1, length.out = length(dates))
+
+      p <- plotly::plot_ly()
+
+      for (i in seq_along(dates)) {
+        d    <- dates[i]
+        snap <- r$cmt_data |>
+          dplyr::filter(date <= d) |>
+          dplyr::filter(date == max(date)) |>
+          dplyr::arrange(maturity_years)
+        if (nrow(snap) == 0L) next
+
+        # Inversion check: 2Y > 10Y
+        y2  <- snap$value[which.min(abs(snap$maturity_years - 2))]
+        y10 <- snap$value[which.min(abs(snap$maturity_years - 10))]
+        inv_label <- if (length(y2) > 0 && length(y10) > 0 && y2 > y10) {
+          " \u26a0 inverted"
+        } else {
+          ""
+        }
+
+        p <- plotly::add_trace(
+          p,
+          data      = snap,
+          x         = ~maturity_years,
+          y         = ~value,
+          type      = "scatter",
+          mode      = "lines+markers",
+          name      = paste0("CMT (", format(d, "%b %d %Y"), ")", inv_label),
+          opacity   = opacities[i],
+          line      = list(color = market_colors["CMT"] %||% "#7f8c8d"),
+          marker    = list(color = market_colors["CMT"] %||% "#7f8c8d"),
+          hovertemplate = paste0(
+            "Maturity: %{x:.1f}y<br>Yield: %{y:.2f}%<br>",
+            format(d, "%Y-%m-%d"), "<extra></extra>"
+          )
+        )
+      }
+
+      plotly::layout(
+        p,
+        xaxis     = list(title = "Maturity (years)"),
+        yaxis     = list(title = "Yield (%)"),
+        legend    = list(orientation = "h", y = -0.2),
+        hovermode = "x unified"
+      )
+    })
+
+    # ── Roll yield time series ──────────────────────────────────────────────
+    output$roll_yield <- plotly::renderPlotly({
+      shiny::req(!is.null(r$data), r$selected_markets, r$date_range)
+      mkts <- setdiff(r$selected_markets, "CMT")
+      shiny::req(length(mkts) > 0L)
+
+      p <- plotly::plot_ly()
+
+      for (mkt in mkts) {
+        c1 <- r$data |>
+          dplyr::filter(market == mkt, contract == 1L,
+                        date >= r$date_range[1], date <= r$date_range[2]) |>
+          dplyr::select(date, c1 = value)
+        c2 <- r$data |>
+          dplyr::filter(market == mkt, contract == 2L,
+                        date >= r$date_range[1], date <= r$date_range[2]) |>
+          dplyr::select(date, c2 = value)
+
+        ry <- dplyr::inner_join(c1, c2, by = "date") |>
+          dplyr::mutate(roll_yield = (c1 / c2 - 1) * 12)   # annualised monthly roll
+
+        if (nrow(ry) == 0L) next
+        col <- market_colors[mkt] %||% "#888888"
+
+        p <- plotly::add_trace(
+          p,
+          data = ry, x = ~date, y = ~roll_yield,
+          type = "scatter", mode = "lines",
+          name = mkt,
+          line = list(color = col),
+          hovertemplate = paste0(mkt, "<br>%{x|%Y-%m-%d}<br>Roll yield: %{y:.1%}/yr<extra></extra>")
+        )
+      }
+
+      # Zero reference line
+      dr <- r$date_range
+      p <- plotly::add_trace(p,
+        x = dr, y = c(0, 0),
+        type = "scatter", mode = "lines",
+        line = list(color = "grey", dash = "dot", width = 1),
+        showlegend = FALSE, hoverinfo = "skip")
+
+      plotly::layout(p,
+        title     = "Annualised Roll Yield — C1/C2 spread as % of spot (positive = backwardation)",
+        xaxis     = list(title = "Date"),
+        yaxis     = list(title = "Roll Yield (annualised)", tickformat = ".1%"),
+        hovermode = "x unified",
+        legend    = list(orientation = "h", y = -0.2)
       )
     })
 
   })
 }
-
-# Null-coalescing helper (base R equivalent of rlang::`%||%`)
-`%||%` <- function(x, y) if (!is.null(x)) x else y

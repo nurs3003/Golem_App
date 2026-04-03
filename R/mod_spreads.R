@@ -10,6 +10,8 @@
 #'   \item \strong{Calendar spread (C1 - C2)} — the premium or discount of the
 #'         front month vs the next.  Backwardation (positive) signals tight
 #'         near-term supply; contango (negative) signals oversupply / high storage.
+#'   \item \strong{Cushing storage} — EIA weekly utilization overlaid with the
+#'         WTI C1-C2 spread.  Explains the fundamental driver of WTI curve shape.
 #' }
 #'
 #' @param id Shiny module id.
@@ -76,6 +78,19 @@ mod_spreads_ui <- function(id) {
              Readings above +2\u03c3 or below \u22122\u03c3 are rare and often signal mean-reversion opportunities or structural regime shifts.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
+        ),
+        bslib::nav_panel(
+          "Cushing Storage (WTI)",
+          plotly::plotlyOutput(ns("cushing"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Cushing, Oklahoma is the delivery point for NYMEX WTI and the largest crude storage hub in North America (~80 Mbbl capacity).
+             When utilization is high (\u226580%), sellers cannot find storage and the market is forced into contango \u2014 deferred prices
+             rise above spot to compensate holders for storage costs.
+             When utilization is low, nearby barrels are scarce and the market flips into backwardation.
+             The C1\u2013C2 spread (red line) confirms the regime in real time: negative = contango, positive = backwardation.
+             Data: EIA weekly, 2011\u2013present.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         )
       )
     )
@@ -91,6 +106,7 @@ mod_spreads_ui <- function(id) {
 #' @importFrom dplyr filter arrange mutate select inner_join bind_rows
 #' @importFrom slider slide_dbl
 #' @importFrom stats sd
+#' @importFrom RTL cushing
 #' @importFrom plotly plot_ly add_trace layout renderPlotly
 mod_spreads_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
@@ -161,23 +177,34 @@ mod_spreads_server <- function(id, r) {
 
       p <- plotly::plot_ly()
 
-      for (prod in c("HO", "RB")) {
-        prod_data <- front(prod) |> dplyr::rename(prod = value)
-        crack_df  <- dplyr::inner_join(cl, prod_data, by = "date") |>
-          dplyr::mutate(crack = prod * 42 - cl)
+      ho_data <- front("HO") |> dplyr::rename(ho = value)
+      rb_data <- front("RB") |> dplyr::rename(rb = value)
 
-        label <- if (prod == "HO") "HO crack (distillate)" else "RB crack (gasoline)"
-        p <- plotly::add_trace(
-          p,
-          data          = crack_df,
-          x             = ~date,
-          y             = ~crack,
-          type          = "scatter",
-          mode          = "lines",
-          name          = label,
-          hovertemplate = paste0(label, "<br>%{x|%Y-%m-%d}<br>$%{y:.2f}/bbl<extra></extra>")
-        )
-      }
+      ho_crack_df <- dplyr::inner_join(cl, ho_data, by = "date") |>
+        dplyr::mutate(crack = ho * 42 - cl)
+      rb_crack_df <- dplyr::inner_join(cl, rb_data, by = "date") |>
+        dplyr::mutate(crack = rb * 42 - cl)
+
+      p <- plotly::add_trace(p, data = ho_crack_df, x = ~date, y = ~crack,
+        type = "scatter", mode = "lines", name = "HO crack (distillate)",
+        line = list(color = market_colors["HO"] %||% "#e67e22"),
+        hovertemplate = "HO crack<br>%{x|%Y-%m-%d}<br>$%{y:.2f}/bbl<extra></extra>")
+
+      p <- plotly::add_trace(p, data = rb_crack_df, x = ~date, y = ~crack,
+        type = "scatter", mode = "lines", name = "RB crack (gasoline)",
+        line = list(color = market_colors["RB"] %||% "#8e44ad"),
+        hovertemplate = "RB crack<br>%{x|%Y-%m-%d}<br>$%{y:.2f}/bbl<extra></extra>")
+
+      # 3-2-1 crack: 3 bbl crude → 2 bbl gasoline + 1 bbl distillate
+      # = (2 × RB×42 + 1 × HO×42 - 3 × CL) / 3
+      crack_321_df <- dplyr::inner_join(cl, ho_data, by = "date") |>
+        dplyr::inner_join(rb_data, by = "date") |>
+        dplyr::mutate(crack = (2 * rb * 42 + ho * 42 - 3 * cl) / 3)
+
+      p <- plotly::add_trace(p, data = crack_321_df, x = ~date, y = ~crack,
+        type = "scatter", mode = "lines", name = "3-2-1 crack (refinery margin)",
+        line = list(color = "#2c3e50", width = 2),
+        hovertemplate = "3-2-1 crack<br>%{x|%Y-%m-%d}<br>$%{y:.2f}/bbl<extra></extra>")
 
       plotly::layout(
         p,
@@ -254,8 +281,9 @@ mod_spreads_server <- function(id, r) {
         df |>
           dplyr::mutate(
             spread    = .data[[spread_col]],
-            roll_mean = slider::slide_dbl(spread, mean,
-                          .before = z_win - 1L, .complete = TRUE, na.rm = TRUE),
+            roll_mean = slider::slide_dbl(spread,
+                          ~ mean(.x, na.rm = TRUE),
+                          .before = z_win - 1L, .complete = TRUE),
             roll_sd   = slider::slide_dbl(spread,
                           ~ stats::sd(.x, na.rm = TRUE),
                           .before = z_win - 1L, .complete = TRUE),
@@ -281,7 +309,9 @@ mod_spreads_server <- function(id, r) {
       req(nrow(spreads_z) > 0L)
       x_range <- range(spreads_z$date)
 
-      colors <- c("WTI\u2013Brent" = "#2c3e50", "HO Crack" = "#2980b9", "RB Crack" = "#e67e22")
+      colors <- c("WTI\u2013Brent" = "#2c3e50",
+                  "HO Crack"    = market_colors["HO"] %||% "#2980b9",
+                  "RB Crack"    = market_colors["RB"] %||% "#e67e22")
 
       p <- plotly::plot_ly()
       for (nm in unique(spreads_z$name)) {
@@ -301,10 +331,10 @@ mod_spreads_server <- function(id, r) {
 
       p |>
         plotly::add_trace(x = x_range, y = c( 2,  2), type = "scatter", mode = "lines",
-          line = list(color = "#e74c3c", dash = "dash", width = 1),
+          line = list(color = alert_color, dash = "dash", width = 1),
           showlegend = FALSE, hoverinfo = "skip") |>
         plotly::add_trace(x = x_range, y = c(-2, -2), type = "scatter", mode = "lines",
-          line = list(color = "#e74c3c", dash = "dash", width = 1),
+          line = list(color = alert_color, dash = "dash", width = 1),
           showlegend = FALSE, hoverinfo = "skip") |>
         plotly::add_trace(x = x_range, y = c( 0,  0), type = "scatter", mode = "lines",
           line = list(color = "grey", dash = "dot", width = 1),
@@ -313,6 +343,59 @@ mod_spreads_server <- function(id, r) {
           title     = paste0("Spread Z-Scores \u2014 ", z_win, "-day rolling normalisation"),
           xaxis     = list(title = ""),
           yaxis     = list(title = "Z-Score (\u03c3)"),
+          hovermode = "x unified",
+          legend    = list(orientation = "h", y = -0.2)
+        )
+    })
+
+    # ----- Cushing storage utilization vs WTI C1-C2 spread ------------------
+    # RTL::cushing$storage is a static weekly EIA dataset (2011-present).
+    # Utilization = stocks / capacity; c1c2 = front-month minus second-month price.
+    # High utilization → contango (negative c1c2); low utilization → backwardation.
+
+    output$cushing <- plotly::renderPlotly({
+      storage <- RTL::cushing$storage |>
+        dplyr::select(date, utilization, c1c2) |>
+        dplyr::arrange(date)
+
+      plotly::plot_ly() |>
+        plotly::add_trace(
+          data          = storage,
+          x             = ~date,
+          y             = ~utilization,
+          type          = "scatter",
+          mode          = "lines",
+          name          = "Cushing utilization",
+          fill          = "tozeroy",
+          fillcolor      = "rgba(41,128,185,0.12)",
+          line          = list(color = "#2980b9", width = 1.5),
+          hovertemplate = "%{x|%Y-%m-%d}<br>Utilization: %{y:.1%}<extra></extra>"
+        ) |>
+        plotly::add_trace(
+          data          = storage,
+          x             = ~date,
+          y             = ~c1c2,
+          type          = "scatter",
+          mode          = "lines",
+          name          = "C1\u2013C2 spread ($/bbl)",
+          yaxis         = "y2",
+          line          = list(color = alert_color, width = 1.5),
+          hovertemplate = "%{x|%Y-%m-%d}<br>C1\u2013C2: $%{y:.2f}/bbl<extra></extra>"
+        ) |>
+        plotly::add_trace(
+          x = range(storage$date), y = c(0, 0),
+          type = "scatter", mode = "lines",
+          yaxis = "y2",
+          line = list(color = "grey", dash = "dot", width = 1),
+          showlegend = FALSE, hoverinfo = "skip"
+        ) |>
+        plotly::layout(
+          title     = "Cushing Storage Utilization vs WTI Calendar Spread",
+          xaxis     = list(title = "Date"),
+          yaxis     = list(title = "Storage Utilization", tickformat = ".0%",
+                           range = c(0.3, 1.05)),
+          yaxis2    = list(title = "C1\u2013C2 Spread ($/bbl)", overlaying = "y",
+                           side = "right", showgrid = FALSE, zeroline = FALSE),
           hovermode = "x unified",
           legend    = list(orientation = "h", y = -0.2)
         )
