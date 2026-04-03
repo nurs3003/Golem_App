@@ -106,7 +106,6 @@ mod_spreads_ui <- function(id) {
 #' @importFrom dplyr filter arrange mutate select inner_join bind_rows
 #' @importFrom slider slide_dbl
 #' @importFrom stats sd
-#' @importFrom RTL cushing
 #' @importFrom plotly plot_ly add_trace layout renderPlotly
 mod_spreads_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
