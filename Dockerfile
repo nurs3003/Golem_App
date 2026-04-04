@@ -48,4 +48,4 @@ RUN echo 'local(options(shiny.port = 3838, shiny.host = "0.0.0.0"))' \
 
 EXPOSE 3838
 
-CMD ["R", "-e", "Golem_App_Project::run_app()"]
+CMD ["R", "-e", "GolemAppProject::run_app()"]
