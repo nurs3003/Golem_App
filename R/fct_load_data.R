@@ -12,7 +12,7 @@
 #' @importFrom dplyr mutate filter select
 fct_load_futures_data <- function() {
   path <- system.file("extdata", "futures_data.feather",
-                      package = "Golem_App_Project")
+                      package = "GolemAppProject")
 
   if (nzchar(path)) {
     return(arrow::read_feather(path))
@@ -47,7 +47,7 @@ fct_load_futures_data <- function() {
 #' @importFrom tidyquant tq_get
 fct_load_cmt_data <- function() {
   path <- system.file("extdata", "cmt_data.feather",
-                      package = "Golem_App_Project")
+                      package = "GolemAppProject")
 
   if (nzchar(path)) {
     return(arrow::read_feather(path))

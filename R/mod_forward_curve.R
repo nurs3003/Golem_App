@@ -55,7 +55,7 @@ mod_forward_curve_ui <- function(id) {
           shiny::tags$p(
             "US Treasury constant-maturity yields (1M to 30Y). Normal = upward-sloping;
              inversion (short > long) historically precedes recessions and signals demand
-             destruction risk for energy commodities. Only visible when CMT is selected.",
+             destruction risk for energy commodities.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         ),
@@ -164,10 +164,6 @@ mod_forward_curve_server <- function(id, r) {
 
     # ── US Treasury yield curve ─────────────────────────────────────────────
     output$yield_curve <- plotly::renderPlotly({
-      shiny::validate(
-        shiny::need("CMT" %in% r$selected_markets,
-                    "Select 'CMT – US Treasuries' in the market selector to view the yield curve.")
-      )
       shiny::req(!is.null(r$cmt_data))
       dates     <- snap_dates()
       opacities <- seq(0.3, 1, length.out = length(dates))

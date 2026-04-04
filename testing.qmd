@@ -955,6 +955,96 @@ plotly::plot_ly() |>
 
 ---
 
+## 10. EIA API vs RTL::eiaStocks Comparison
+
+### 10.1 Find matching tickers in RTL::tickers_eia
+
+Search for storage-related series to identify the correct ticker strings
+for Cushing crude, NG Lower 48, distillate/ULSD, and gasoline.
+
+```{r}
+# Show all unique categories to understand the structure
+unique(RTL::tickers_eia$category)
+```
+
+```{r}
+# Filter for storage/stocks series
+RTL::tickers_eia |>
+  dplyr::filter(grepl("stock|storage|cushing|inventory",
+                       tick.r, ignore.case = TRUE)) |>
+  dplyr::select(tick.eia, tick.r, product, category, sd_category) |>
+  print(n = 50)
+```
+
+### 10.2 Fetch via EIA API
+
+Replace the ticker strings below with the ones identified above, and paste
+your EIA API key where indicated.
+
+```{r}
+EIA_KEY <- "PASTE_YOUR_KEY_HERE"
+
+api_data <- RTL::eia2tidy_all(
+  tickers = tibble::tribble(
+    ~ticker,                         ~name,
+    "PET.W_EPC0_SAX_YCUOK_MBBL.W", "CrudeCushing",
+    "NG.NW2_EPG0_SWO_R48_BCF.W",   "NGLower48",
+    "PET.WDISTUS1.W",               "Distillate",
+    "PET.WGTSTUS1.W",               "Gasoline"
+  ),
+  key  = EIA_KEY,
+  long = TRUE
+)
+
+api_data |>
+  dplyr::group_by(series) |>
+  dplyr::summarise(from = min(date), to = max(date),
+                   rows = dplyr::n(), latest = dplyr::last(value))
+```
+
+### 10.3 Compare with RTL::eiaStocks
+
+```{r}
+RTL::eiaStocks |>
+  dplyr::group_by(series) |>
+  dplyr::summarise(from = min(date), to = max(date),
+                   rows = dplyr::n(), latest = dplyr::last(value))
+```
+
+### 10.4 Side-by-side value check (after filling tickers above)
+
+```{r}
+# Map: api series name -> RTL::eiaStocks series name
+series_map <- tibble::tribble(
+  ~api_name,      ~rtl_name,
+  "CrudeCushing", "CrudeCushing",
+  "NGLower48",    "NGLower48",
+  "Distillate",   "ULSD",
+  "Gasoline",     "Gasoline"
+)
+
+purrr::pmap_dfr(series_map, function(api_name, rtl_name) {
+  api_s <- dplyr::filter(api_data, series == api_name)
+  rtl_s <- dplyr::filter(RTL::eiaStocks, series == rtl_name)
+
+  dplyr::inner_join(api_s, dplyr::select(rtl_s, date, rtl_value = value),
+                    by = "date") |>
+    dplyr::mutate(diff = value - rtl_value) |>
+    dplyr::summarise(
+      api_series   = api_name,
+      rtl_series   = rtl_name,
+      n_matched    = dplyr::n(),
+      api_from     = min(date),
+      api_to       = max(date),
+      rtl_rows     = nrow(rtl_s),
+      max_abs_diff = max(abs(diff), na.rm = TRUE),
+      mean_diff    = mean(diff, na.rm = TRUE)
+    )
+})
+```
+
+---
+
 ## Summary
 
 | Tab | Key question |

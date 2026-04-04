@@ -10,18 +10,13 @@
 mod_market_selector_ui <- function(id) {
   ns <- NS(id)
 
-  market_choices <- list(
-    "Energy" = c(
-      "CL – WTI Crude"    = "CL",
-      "BRN – Brent"       = "BRN",
-      "NG – Natural Gas"  = "NG",
-      "HO – Heating Oil"  = "HO",
-      "RB – RBOB Gas"     = "RB",
-      "HTT – WTI Houston" = "HTT"
-    ),
-    "Rates" = c(
-      "CMT – US Treasuries" = "CMT"
-    )
+  market_choices <- c(
+    "CL – WTI Crude"    = "CL",
+    "BRN – Brent"       = "BRN",
+    "NG – Natural Gas"  = "NG",
+    "HO – Heating Oil"  = "HO",
+    "RB – RBOB Gas"     = "RB",
+    "HTT – WTI Houston" = "HTT"
   )
 
   shiny::div(
