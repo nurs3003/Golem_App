@@ -19,7 +19,7 @@ app_server <- function(input, output, session) {
 
   # Hide the selector bar on Overview and Briefing (no selector effect there)
   shiny::observeEvent(input$main_tabs, {
-    if (isTRUE(input$main_tabs %in% c("Overview", "Briefing"))) {
+    if (isTRUE(input$main_tabs %in% c("Overview", "Briefing", "Fundamentals"))) {
       shinyjs::hide("selector_bar")
     } else {
       shinyjs::show("selector_bar")
@@ -49,4 +49,5 @@ app_server <- function(input, output, session) {
   mod_seasonality_server("seas",         r)
   mod_spreads_server("spreads",          r)
   mod_hedge_ratios_server("hedge",       r)
+  mod_storage_server("storage",         r)
 }

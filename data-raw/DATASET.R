@@ -75,9 +75,34 @@ series_to_markets <- c(
 eia_storage <- eia_storage |>
   dplyr::mutate(market_label = series_to_markets[series])
 
-# ── 4. Save as package dataset ────────────────────────────────────────────────
+# ── 4. Save eia_storage as package dataset ────────────────────────────────────
 usethis::use_data(eia_storage, overwrite = TRUE)
-
 message("eia_storage saved: ", nrow(eia_storage), " rows, ",
         length(unique(eia_storage$series)), " series, ",
         format(min(eia_storage$date)), " \u2192 ", format(max(eia_storage$date)))
+
+# ── 5. Fetch crude S/D components ─────────────────────────────────────────────
+# Weekly EIA series for US crude oil supply/demand balance.
+# Production + Imports - Exports - Refinery Inputs = implied stock change.
+# Distillate and gasoline products supplied serve as demand proxies.
+message("Fetching EIA S/D series via API...")
+eia_sd <- RTL::eia2tidy_all(
+  tickers = tibble::tribble(
+    ~ticker,            ~name,
+    "PET.WCRFPUS2.W",  "CrudeProduction",   # US field production (Mbbl/d)
+    "PET.WCRIMUS2.W",  "CrudeImports",      # US crude imports (Mbbl/d)
+    "PET.WCREXUS2.W",  "CrudeExports",      # US crude exports (Mbbl/d)
+    "PET.WCRRIUS2.W",  "RefineryInputs",    # Refinery net inputs (Mbbl/d)
+    "PET.WDIUPUS2.W",  "DistillateDemand",  # Distillate products supplied (Mbbl/d)
+    "PET.WGFUPUS2.W",  "GasolineDemand"     # Gasoline products supplied (Mbbl/d)
+  ),
+  key  = EIA_KEY,
+  long = TRUE
+) |>
+  dplyr::arrange(series, date)
+
+# ── 6. Save eia_sd as package dataset ─────────────────────────────────────────
+usethis::use_data(eia_sd, overwrite = TRUE)
+message("eia_sd saved: ", nrow(eia_sd), " rows, ",
+        length(unique(eia_sd$series)), " series, ",
+        format(min(eia_sd$date)), " \u2192 ", format(max(eia_sd$date)))

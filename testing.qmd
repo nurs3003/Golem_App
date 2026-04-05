@@ -94,7 +94,7 @@ cmt_meta <- tibble(
 
 cmt <- lapply(seq_len(nrow(cmt_meta)), function(i) {
   tq_get(cmt_meta$ticker[i], get = "economic.data") |>
-    rename(value = price) |>
+    dplyr::rename(value = price) |>
     mutate(
       maturity_label = cmt_meta$ticker[i],
       maturity_years = cmt_meta$maturity_years[i],
@@ -982,7 +982,7 @@ Replace the ticker strings below with the ones identified above, and paste
 your EIA API key where indicated.
 
 ```{r}
-EIA_KEY <- "PASTE_YOUR_KEY_HERE"
+EIA_KEY <- Sys.getenv("EIA_KEY")
 
 api_data <- RTL::eia2tidy_all(
   tickers = tibble::tribble(
@@ -1040,6 +1040,345 @@ purrr::pmap_dfr(series_map, function(api_name, rtl_name) {
       max_abs_diff = max(abs(diff), na.rm = TRUE),
       mean_diff    = mean(diff, na.rm = TRUE)
     )
+})
+```
+
+---
+
+## 11. Fundamentals — Storage & Supply/Demand by Market
+
+Weekly EIA inventory data paired with supply/demand components. For a Risk Manager
+the storage surplus/deficit vs the 5-year seasonal norm is the primary fundamental
+signal. The S/D balance (production + imports − exports − demand) explains *why*
+stocks are building or drawing.
+
+```{r}
+# Requires devtools::load_all() in this R session
+storage <- eia_storage |>
+  dplyr::filter(!is.na(five_yr_avg))
+
+EIA_KEY <- Sys.getenv("EIA_KEY")
+
+sd_data <- RTL::eia2tidy_all(
+  tickers = tibble::tribble(
+    ~ticker,            ~name,
+    "PET.WCRFPUS2.W",  "CrudeProduction",  # US field production (Mbbl/d)
+    "PET.WCRIMUS2.W",  "CrudeImports",     # US crude imports (Mbbl/d)
+    "PET.WCREXUS2.W",  "CrudeExports",     # US crude exports (Mbbl/d)
+    "PET.WCRRIUS2.W",  "RefineryInputs",   # Refinery net inputs (Mbbl/d)
+    "PET.WDIUPUS2.W",  "DistillateDemand", # Distillate products supplied (Mbbl/d)
+    "PET.WGFUPUS2.W",  "GasolineDemand"   # Gasoline products supplied (Mbbl/d)
+  ),
+  key  = EIA_KEY,
+  long = TRUE
+)
+```
+
+---
+
+### 11.1 CL / HTT — Crude Oil (Cushing)
+
+Cushing, Oklahoma is the NYMEX WTI delivery point. Full tanks → contango;
+tight storage → backwardation. The S/D balance (production + imports − exports
+− refinery inputs) explains whether stocks are expected to build or draw.
+
+**Storage vs 5-year average**
+
+```{r}
+crude <- dplyr::filter(storage, series == "CrudeCushing")
+
+plotly::plot_ly() |>
+  plotly::add_trace(
+    data = crude, x = ~date, y = ~five_yr_avg,
+    type = "scatter", mode = "lines", name = "5-yr avg",
+    line = list(color = "grey", dash = "dash", width = 1.5),
+    hovertemplate = "%{x|%Y-%m-%d}<br>5-yr avg: %{y:,.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = crude, x = ~date, y = ~value,
+    type = "scatter", mode = "lines", name = "Actual",
+    line = list(color = "#2980b9", width = 2),
+    hovertemplate = "%{x|%Y-%m-%d}<br>Actual: %{y:,.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = crude, x = ~date, y = ~surplus_deficit,
+    type = "bar", name = "Surplus / Deficit vs 5-yr avg",
+    yaxis = "y2",
+    marker = list(color = dplyr::case_when(
+      crude$surplus_deficit >= 0 ~ "rgba(39,174,96,0.5)",
+      TRUE                       ~ "rgba(192,57,43,0.5)"
+    )),
+    hovertemplate = "%{x|%Y-%m-%d}<br>+/- 5yr: %{y:,.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::layout(
+    title     = "Cushing Crude Oil Stocks vs 5-Year Average (Thousand Barrels)",
+    xaxis     = list(title = ""),
+    yaxis     = list(title = "Stocks (Thousand Barrels)"),
+    yaxis2    = list(title = "Surplus / Deficit (Mbbl)", overlaying = "y",
+                     side = "right", showgrid = FALSE, zeroline = TRUE),
+    hovermode = "x unified",
+    legend    = list(orientation = "h", y = -0.2)
+  )
+```
+
+**S/D Balance — implied stock change**
+
+Implied stock change = Production + Imports − Exports − Refinery Inputs.
+Negative (green) = draw (bullish); Positive (red) = build (bearish).
+
+```{r}
+crude_sd <- sd_data |>
+  dplyr::filter(series %in% c("CrudeProduction", "CrudeImports",
+                               "CrudeExports", "RefineryInputs")) |>
+  tidyr::pivot_wider(id_cols = date, names_from = series, values_from = value) |>
+  dplyr::filter(dplyr::if_all(-date, ~ !is.na(.x))) |>
+  dplyr::mutate(
+    implied_change = CrudeProduction + CrudeImports - CrudeExports - RefineryInputs
+  )
+
+plotly::plot_ly() |>
+  plotly::add_trace(
+    data = crude_sd, x = ~date, y = ~implied_change,
+    type = "bar", name = "Implied stock change",
+    marker = list(color = dplyr::case_when(
+      crude_sd$implied_change <= 0 ~ "rgba(39,174,96,0.5)",
+      TRUE                         ~ "rgba(192,57,43,0.5)"
+    )),
+    hovertemplate = "%{x|%Y-%m-%d}<br>Implied change: %{y:.0f} Mbbl/d<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = crude_sd, x = ~date, y = ~CrudeProduction,
+    type = "scatter", mode = "lines", name = "Production",
+    line = list(color = "#2980b9", width = 1.5),
+    hovertemplate = "Production: %{y:.0f} Mbbl/d<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = crude_sd, x = ~date, y = ~RefineryInputs,
+    type = "scatter", mode = "lines", name = "Refinery inputs",
+    line = list(color = "#e67e22", width = 1.5),
+    hovertemplate = "Refinery inputs: %{y:.0f} Mbbl/d<extra></extra>"
+  ) |>
+  plotly::layout(
+    title     = "US Crude Oil S/D Balance (Thousand Barrels/day)",
+    xaxis     = list(title = ""),
+    yaxis     = list(title = "Mbbl/d"),
+    hovermode = "x unified",
+    legend    = list(orientation = "h", y = -0.2)
+  )
+```
+
+---
+
+### 11.2 NG — Natural Gas
+
+EIA reports working gas in storage every Thursday. A deficit heading into the
+November–March heating season is the primary driver of NG price rallies.
+NG production and consumption data from EIA is monthly (weekly not available).
+
+**Storage vs 5-year average**
+
+```{r}
+ng <- dplyr::filter(storage, series == "NGLower48")
+
+plotly::plot_ly() |>
+  plotly::add_trace(
+    data = ng, x = ~date, y = ~five_yr_avg,
+    type = "scatter", mode = "lines", name = "5-yr avg",
+    line = list(color = "grey", dash = "dash", width = 1.5),
+    hovertemplate = "%{x|%Y-%m-%d}<br>5-yr avg: %{y:.0f} Bcf<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = ng, x = ~date, y = ~value,
+    type = "scatter", mode = "lines", name = "Actual",
+    line = list(color = "#e74c3c", width = 2),
+    hovertemplate = "%{x|%Y-%m-%d}<br>Actual: %{y:.0f} Bcf<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = ng, x = ~date, y = ~surplus_deficit,
+    type = "bar", name = "Surplus / Deficit vs 5-yr avg",
+    yaxis = "y2",
+    marker = list(color = dplyr::case_when(
+      ng$surplus_deficit >= 0 ~ "rgba(39,174,96,0.5)",
+      TRUE                    ~ "rgba(192,57,43,0.5)"
+    )),
+    hovertemplate = "%{x|%Y-%m-%d}<br>+/- 5yr: %{y:.0f} Bcf<extra></extra>"
+  ) |>
+  plotly::layout(
+    title     = "NG Lower 48 Working Gas in Storage vs 5-Year Average",
+    xaxis     = list(title = ""),
+    yaxis     = list(title = "Working Gas (Bcf)"),
+    yaxis2    = list(title = "Surplus / Deficit (Bcf)", overlaying = "y",
+                     side = "right", showgrid = FALSE, zeroline = TRUE),
+    hovermode = "x unified",
+    legend    = list(orientation = "h", y = -0.2)
+  )
+```
+
+---
+
+### 11.3 HO — Heating Oil (Distillate)
+
+Distillate stocks draw in autumn as heating oil demand rises ahead of winter.
+A deficit entering Q4 is a direct upward price catalyst for HO futures.
+
+**Storage vs 5-year average**
+
+```{r}
+dist <- dplyr::filter(storage, series == "Distillate")
+
+plotly::plot_ly() |>
+  plotly::add_trace(
+    data = dist, x = ~date, y = ~five_yr_avg,
+    type = "scatter", mode = "lines", name = "5-yr avg",
+    line = list(color = "grey", dash = "dash", width = 1.5),
+    hovertemplate = "%{x|%Y-%m-%d}<br>5-yr avg: %{y:,.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = dist, x = ~date, y = ~value,
+    type = "scatter", mode = "lines", name = "Actual",
+    line = list(color = "#e67e22", width = 2),
+    hovertemplate = "%{x|%Y-%m-%d}<br>Actual: %{y:,.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = dist, x = ~date, y = ~surplus_deficit,
+    type = "bar", name = "Surplus / Deficit vs 5-yr avg",
+    yaxis = "y2",
+    marker = list(color = dplyr::case_when(
+      dist$surplus_deficit >= 0 ~ "rgba(39,174,96,0.5)",
+      TRUE                      ~ "rgba(192,57,43,0.5)"
+    )),
+    hovertemplate = "%{x|%Y-%m-%d}<br>+/- 5yr: %{y:,.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::layout(
+    title     = "US Distillate Stocks vs 5-Year Average (Thousand Barrels)",
+    xaxis     = list(title = ""),
+    yaxis     = list(title = "Stocks (Thousand Barrels)"),
+    yaxis2    = list(title = "Surplus / Deficit (Mbbl)", overlaying = "y",
+                     side = "right", showgrid = FALSE, zeroline = TRUE),
+    hovermode = "x unified",
+    legend    = list(orientation = "h", y = -0.2)
+  )
+```
+
+**S/D — Distillate demand (products supplied)**
+
+```{r}
+dist_demand <- dplyr::filter(sd_data, series == "DistillateDemand")
+
+plotly::plot_ly(data = dist_demand, x = ~date, y = ~value) |>
+  plotly::add_trace(
+    type = "scatter", mode = "lines", name = "Distillate demand",
+    line = list(color = "#e67e22", width = 1.5),
+    hovertemplate = "%{x|%Y-%m-%d}<br>Demand: %{y:.0f} Mbbl/d<extra></extra>"
+  ) |>
+  plotly::layout(
+    title     = "US Distillate Products Supplied — Demand Proxy (Mbbl/d)",
+    xaxis     = list(title = ""),
+    yaxis     = list(title = "Mbbl/d"),
+    hovermode = "x unified"
+  )
+```
+
+---
+
+### 11.4 RB — Gasoline (RBOB)
+
+Gasoline stocks build in Q1 as refiners ramp up ahead of the summer driving
+season. A draw below the 5-year average entering May–June signals a tight
+driving-season supply and supports crack spreads.
+
+**Storage vs 5-year average**
+
+```{r}
+gas <- dplyr::filter(storage, series == "Gasoline")
+
+plotly::plot_ly() |>
+  plotly::add_trace(
+    data = gas, x = ~date, y = ~five_yr_avg,
+    type = "scatter", mode = "lines", name = "5-yr avg",
+    line = list(color = "grey", dash = "dash", width = 1.5),
+    hovertemplate = "%{x|%Y-%m-%d}<br>5-yr avg: %{y:,.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = gas, x = ~date, y = ~value,
+    type = "scatter", mode = "lines", name = "Actual",
+    line = list(color = "#8e44ad", width = 2),
+    hovertemplate = "%{x|%Y-%m-%d}<br>Actual: %{y:,.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::add_trace(
+    data = gas, x = ~date, y = ~surplus_deficit,
+    type = "bar", name = "Surplus / Deficit vs 5-yr avg",
+    yaxis = "y2",
+    marker = list(color = dplyr::case_when(
+      gas$surplus_deficit >= 0 ~ "rgba(39,174,96,0.5)",
+      TRUE                     ~ "rgba(192,57,43,0.5)"
+    )),
+    hovertemplate = "%{x|%Y-%m-%d}<br>+/- 5yr: %{y:,.0f} Mbbl<extra></extra>"
+  ) |>
+  plotly::layout(
+    title     = "US Gasoline Stocks vs 5-Year Average (Thousand Barrels)",
+    xaxis     = list(title = ""),
+    yaxis     = list(title = "Stocks (Thousand Barrels)"),
+    yaxis2    = list(title = "Surplus / Deficit (Mbbl)", overlaying = "y",
+                     side = "right", showgrid = FALSE, zeroline = TRUE),
+    hovermode = "x unified",
+    legend    = list(orientation = "h", y = -0.2)
+  )
+```
+
+**S/D — Gasoline demand (products supplied)**
+
+```{r}
+gas_demand <- dplyr::filter(sd_data, series == "GasolineDemand")
+
+plotly::plot_ly(data = gas_demand, x = ~date, y = ~value) |>
+  plotly::add_trace(
+    type = "scatter", mode = "lines", name = "Gasoline demand",
+    line = list(color = "#8e44ad", width = 1.5),
+    hovertemplate = "%{x|%Y-%m-%d}<br>Demand: %{y:.0f} Mbbl/d<extra></extra>"
+  ) |>
+  plotly::layout(
+    title     = "US Gasoline Products Supplied — Demand Proxy (Mbbl/d)",
+    xaxis     = list(title = ""),
+    yaxis     = list(title = "Mbbl/d"),
+    hovermode = "x unified"
+  )
+```
+
+---
+
+## 12. EIA API vs RTL::eiaStocks Comparison (Validation)
+
+Confirms that the API-sourced data used in `eia_storage` matches RTL's bundled
+series for CrudeCushing and NGLower48, and differs (correctly) for Distillate
+and Gasoline where we switched to broader EIA headline series.
+
+```{r}
+series_map <- tibble::tribble(
+  ~api_name,      ~rtl_name,
+  "CrudeCushing", "CrudeCushing",
+  "NGLower48",    "NGLower48",
+  "Distillate",   "ULSD",
+  "Gasoline",     "Gasoline"
+)
+
+purrr::pmap_dfr(series_map, function(api_name, rtl_name) {
+  api_s <- dplyr::filter(sd_data |> dplyr::bind_rows(
+    RTL::eia2tidy_all(
+      tickers = tibble::tribble(
+        ~ticker, ~name,
+        "PET.W_EPC0_SAX_YCUOK_MBBL.W", "CrudeCushing",
+        "NG.NW2_EPG0_SWO_R48_BCF.W",   "NGLower48",
+        "PET.WDISTUS1.W",               "Distillate",
+        "PET.WGTSTUS1.W",               "Gasoline"
+      ), key = EIA_KEY, long = TRUE)
+  ), series == api_name)
+  rtl_s <- dplyr::filter(RTL::eiaStocks, series == rtl_name)
+  dplyr::inner_join(api_s, dplyr::select(rtl_s, date, rtl_value = value), by = "date") |>
+    dplyr::mutate(diff = value - rtl_value) |>
+    dplyr::summarise(api_series = api_name, rtl_series = rtl_name,
+                     n_matched = dplyr::n(), max_abs_diff = max(abs(diff), na.rm = TRUE),
+                     mean_diff = mean(diff, na.rm = TRUE))
 })
 ```
 
