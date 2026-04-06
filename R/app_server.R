@@ -4,6 +4,7 @@
 #' @noRd
 #' @importFrom shiny reactiveValues observe req showNotification removeNotification observeEvent
 #' @importFrom shinyjs hide show
+#' @importFrom utils data
 app_server <- function(input, output, session) {
 
   # ---------------------------------------------------------------------------
@@ -37,7 +38,9 @@ app_server <- function(input, output, session) {
     r$cmt_data <- fct_load_cmt_data()
     removeNotification("load_cmt")
 
-    r$eia_storage <- eia_storage
+    tmp <- new.env(parent = emptyenv())
+    utils::data("eia_storage", package = "GolemAppProject", envir = tmp)
+    r$eia_storage <- tmp$eia_storage
 
     showNotification("Data ready.", type = "message", duration = 3)
   })
