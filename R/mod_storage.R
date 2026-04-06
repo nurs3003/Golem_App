@@ -92,7 +92,8 @@ mod_storage_server <- function(id, r) {
       unit_lbl  <- market_units[mkt]
       col       <- market_colors[mkt] %||% "#2980b9"
 
-      df <- dplyr::filter(eia_storage, series == series_nm, !is.na(five_yr_avg))
+      shiny::req(!is.null(r$eia_storage))
+      df <- dplyr::filter(r$eia_storage, series == series_nm, !is.na(five_yr_avg))
       shiny::req(nrow(df) > 0L)
 
       if (!is.null(r$date_range)) {
@@ -139,7 +140,8 @@ mod_storage_server <- function(id, r) {
       series_nm <- market_to_series[mkt]
       unit_lbl  <- market_units[mkt]
 
-      df <- dplyr::filter(eia_storage, series == series_nm) |>
+      shiny::req(!is.null(r$eia_storage))
+      df <- dplyr::filter(r$eia_storage, series == series_nm) |>
         dplyr::arrange(date) |>
         dplyr::mutate(wow_change = value - dplyr::lag(value)) |>
         dplyr::filter(!is.na(wow_change))

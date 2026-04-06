@@ -13,6 +13,7 @@ app_server <- function(input, output, session) {
   r <- reactiveValues(
     data             = NULL,   # parsed RTL::dflong  (date, market, contract, value)
     cmt_data         = NULL,   # FRED CMT yields     (date, maturity_label, maturity_years, value)
+    eia_storage      = NULL,   # EIA weekly storage  (date, series, value, five_yr_avg, surplus_deficit)
     selected_markets = c("CL", "BRN", "NG"),
     date_range       = c(as.Date("2007-01-01"), Sys.Date())
   )
@@ -35,6 +36,8 @@ app_server <- function(input, output, session) {
     showNotification("Fetching Treasury yields from FRED...", id = "load_cmt", duration = NULL, type = "message")
     r$cmt_data <- fct_load_cmt_data()
     removeNotification("load_cmt")
+
+    r$eia_storage <- eia_storage
 
     showNotification("Data ready.", type = "message", duration = 3)
   })
