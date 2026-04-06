@@ -1,6 +1,6 @@
 # ── Base image ────────────────────────────────────────────────────────────────
 # rocker/shiny:4.4.2 = Ubuntu 22.04 (Jammy) + R 4.4.2 + Shiny Server
-FROM rocker/shiny:4.4.2
+FROM --platform=linux/amd64 rocker/shiny:4.4.2
 
 # ── System libraries ──────────────────────────────────────────────────────────
 # Required by arrow, curl, xml2, and text-rendering packages
