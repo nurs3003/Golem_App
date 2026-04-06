@@ -68,6 +68,17 @@ mod_volatility_ui <- function(id) {
              Current vol above the 75th percentile = elevated regime; above the 90th = stress.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
+        ),
+        bslib::nav_panel(
+          "Value at Risk",
+          plotly::plotlyOutput(ns("var_plot"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Rolling 1-day historical VaR at 95% and 99% confidence (252-day lookback window).
+             VaR is expressed in USD per contract (1,000 bbl for CL/BRN/HTT, 42,000 gal for HO/RB, 10,000 MMBtu for NG).
+             Spikes in VaR coincide with vol regimes: COVID Mar 2020, Russia-Ukraine Feb 2022.
+             99% VaR breaches occur on average 2\u20133 times per year under normal conditions.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
         )
       )
     )
@@ -301,6 +312,71 @@ mod_volatility_server <- function(id, r) {
           yaxis  = list(title = "Annualised Vol", tickformat = ".0%"),
           legend = list(orientation = "h", y = -0.2)
         )
+    })
+
+    # Rolling historical VaR (1-day, 95% & 99%, 252-day lookback)
+    output$var_plot <- plotly::renderPlotly({
+      shiny::req(!is.null(r$data), r$selected_markets, r$date_range)
+      mkts <- setdiff(r$selected_markets, "CMT")
+      shiny::req(length(mkts) > 0L)
+
+      # Contract size in natural units (USD per contract = VaR% x price x size)
+      contract_size <- c(CL = 1000, BRN = 1000, HTT = 1000,
+                         HO = 42000, RB = 42000, NG = 10000)
+
+      var_window <- 252L
+      p <- plotly::plot_ly()
+
+      for (mkt in mkts) {
+        fd <- r$data |>
+          dplyr::filter(market == mkt, contract == 1L,
+                        date >= r$date_range[1], date <= r$date_range[2]) |>
+          dplyr::arrange(date) |>
+          dplyr::mutate(log_ret = c(NA_real_, diff(log(value)))) |>
+          dplyr::filter(!is.na(log_ret))
+
+        if (nrow(fd) < var_window + 1L) next
+
+        cs  <- contract_size[mkt] %||% 1000
+        col <- market_colors[mkt] %||% "#888888"
+
+        fd <- fd |>
+          dplyr::mutate(
+            var95 = slider::slide_dbl(
+              log_ret,
+              ~ abs(stats::quantile(.x, 0.05, na.rm = TRUE)),
+              .before = var_window - 1L, .complete = TRUE
+            ) * value * cs,
+            var99 = slider::slide_dbl(
+              log_ret,
+              ~ abs(stats::quantile(.x, 0.01, na.rm = TRUE)),
+              .before = var_window - 1L, .complete = TRUE
+            ) * value * cs
+          ) |>
+          dplyr::filter(!is.na(var95))
+
+        p <- plotly::add_trace(p,
+          data = fd, x = ~date, y = ~var95,
+          type = "scatter", mode = "lines",
+          name = paste0(mkt, " 95% VaR"),
+          line = list(color = col, width = 1.5),
+          hovertemplate = paste0(mkt, " 95% VaR<br>%{x|%Y-%m-%d}<br>$%{y:,.0f}/contract<extra></extra>")
+        )
+        p <- plotly::add_trace(p,
+          data = fd, x = ~date, y = ~var99,
+          type = "scatter", mode = "lines",
+          name = paste0(mkt, " 99% VaR"),
+          line = list(color = col, width = 1.5, dash = "dash"),
+          hovertemplate = paste0(mkt, " 99% VaR<br>%{x|%Y-%m-%d}<br>$%{y:,.0f}/contract<extra></extra>")
+        )
+      }
+
+      plotly::layout(p,
+        xaxis     = list(title = "Date"),
+        yaxis     = list(title = "1-Day VaR (USD per contract)"),
+        hovermode = "x unified",
+        legend    = list(orientation = "h", y = -0.2)
+      )
     })
 
   })

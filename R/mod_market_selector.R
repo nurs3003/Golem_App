@@ -54,6 +54,7 @@ mod_market_selector_ui <- function(id) {
 }
 
 #' market_selector Server Function
+
 #'
 #' @param id Shiny module id.
 #' @param r Shared \code{reactiveValues} environment.

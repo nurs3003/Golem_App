@@ -21,7 +21,7 @@ app_server <- function(input, output, session) {
 
   # Hide the selector bar on Overview and Briefing (no selector effect there)
   shiny::observeEvent(input$main_tabs, {
-    if (isTRUE(input$main_tabs %in% c("Overview", "Briefing", "Fundamentals"))) {
+    if (isTRUE(input$main_tabs %in% c("Overview", "Fundamentals", "Spreads"))) {
       shinyjs::hide("selector_bar")
     } else {
       shinyjs::show("selector_bar")
@@ -48,7 +48,6 @@ app_server <- function(input, output, session) {
   # Module servers
   mod_market_selector_server("selector", r)
   mod_market_overview_server("overview", r)
-  mod_cross_market_server("briefing",    r)
   mod_forward_curve_server("fc",         r)
   mod_volatility_server("vol",           r)
   mod_codynamics_server("codyn",         r)

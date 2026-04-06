@@ -16,7 +16,6 @@ app_ui <- function(request) {
       # Pinned selector bar — hidden on Overview tab via shinyjs
       header   = shiny::div(id = "selector_bar", mod_market_selector_ui("selector")),
       bslib::nav_panel("Overview",     fillable = FALSE, mod_market_overview_ui("overview")),
-      bslib::nav_panel("Briefing",     fillable = FALSE, mod_cross_market_ui("briefing")),
       bslib::nav_panel("Fundamentals", fillable = TRUE,  mod_storage_ui("storage")),
       bslib::nav_panel("Curves",       fillable = TRUE,  mod_forward_curve_ui("fc")),
       bslib::nav_panel("Volatility",   fillable = TRUE,  mod_volatility_ui("vol")),

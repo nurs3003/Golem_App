@@ -9,7 +9,7 @@
 #'
 #' @param id Shiny module id.
 #' @noRd
-#' @importFrom shiny NS tagList dateInput checkboxInput numericInput
+#' @importFrom shiny NS tagList dateInput checkboxInput numericInput selectInput
 #' @importFrom bslib layout_columns card card_header navset_tab nav_panel
 #' @importFrom plotly plotlyOutput
 mod_forward_curve_ui <- function(id) {
@@ -31,6 +31,12 @@ mod_forward_curve_ui <- function(id) {
         ns("history_interval"),
         "Interval between snapshots (days)",
         value = 365, min = 30, max = 1825, step = 30
+      ),
+      shiny::selectInput(
+        ns("macro_overlay"),
+        "Macro overlay (commodity)",
+        choices  = c("CL", "BRN", "NG", "HO", "RB", "HTT"),
+        selected = "CL"
       )
     ),
     bslib::card(
@@ -66,6 +72,17 @@ mod_forward_curve_ui <- function(id) {
             "Annualised roll yield = (C1/C2 \u2013 1) \u00d7 12. Positive (backwardation) = you earn by rolling forward;
              negative (contango) = you pay. In steep contango this cost can exceed 2\u20133%/month \u2014
              material over a year for any hedger maintaining front-month exposure.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
+        ),
+        bslib::nav_panel(
+          "Macro Context",
+          plotly::plotlyOutput(ns("macro_context"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "US Treasury 2Y\u201310Y yield spread (left axis) vs the selected commodity front-month price (right axis).
+             When the spread goes negative the yield curve is inverted \u2014 historically a leading indicator of
+             recession and demand destruction. The 2008\u20132009 inversion preceded a 70% crude collapse;
+             the 2019\u20132020 inversion preceded COVID demand shock. Use this view to contextualise macro risk.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         )
@@ -263,6 +280,71 @@ mod_forward_curve_server <- function(id, r) {
         hovermode = "x unified",
         legend    = list(orientation = "h", y = -0.2)
       )
+    })
+
+    # ── Macro Context: 2Y-10Y spread vs commodity ───────────────────────────
+    output$macro_context <- plotly::renderPlotly({
+      shiny::req(!is.null(r$cmt_data), !is.null(r$data), r$date_range)
+      mkt <- input$macro_overlay
+
+      # 2Y and 10Y yields from CMT data
+      y2 <- r$cmt_data |>
+        dplyr::filter(abs(maturity_years - 2)  < 0.1) |>
+        dplyr::select(date, y2 = value)
+      y10 <- r$cmt_data |>
+        dplyr::filter(abs(maturity_years - 10) < 0.1) |>
+        dplyr::select(date, y10 = value)
+
+      spread_df <- dplyr::inner_join(y2, y10, by = "date") |>
+        dplyr::mutate(spread = y10 - y2) |>
+        dplyr::filter(date >= r$date_range[1], date <= r$date_range[2]) |>
+        dplyr::arrange(date)
+
+      shiny::req(nrow(spread_df) > 0L)
+
+      # Commodity front-month
+      comm_df <- r$data |>
+        dplyr::filter(market == mkt, contract == 1L,
+                      date >= r$date_range[1], date <= r$date_range[2]) |>
+        dplyr::select(date, price = value) |>
+        dplyr::arrange(date)
+
+      col <- market_colors[mkt] %||% "#2980b9"
+
+      plotly::plot_ly() |>
+        plotly::add_trace(
+          data          = spread_df,
+          x             = ~date, y = ~spread,
+          type          = "scatter", mode = "lines",
+          name          = "2Y\u201310Y spread",
+          fill          = "tozeroy",
+          fillcolor      = "rgba(127,140,141,0.15)",
+          line          = list(color = "#7f8c8d", width = 1.5),
+          hovertemplate = "%{x|%Y-%m-%d}<br>2Y\u201310Y: %{y:.2f}%<extra></extra>"
+        ) |>
+        plotly::add_trace(
+          data          = comm_df,
+          x             = ~date, y = ~price,
+          type          = "scatter", mode = "lines",
+          name          = paste0(mkt, " front-month"),
+          yaxis         = "y2",
+          line          = list(color = col, width = 2),
+          hovertemplate = paste0(mkt, " %{x|%Y-%m-%d}<br>$%{y:.2f}<extra></extra>")
+        ) |>
+        plotly::add_trace(
+          x = range(spread_df$date), y = c(0, 0),
+          type = "scatter", mode = "lines",
+          line = list(color = alert_color, dash = "dash", width = 1),
+          showlegend = FALSE, hoverinfo = "skip"
+        ) |>
+        plotly::layout(
+          xaxis     = list(title = ""),
+          yaxis     = list(title = "2Y\u201310Y Spread (%)"),
+          yaxis2    = list(title = paste0(mkt, " Price (USD)"),
+                           overlaying = "y", side = "right", showgrid = FALSE),
+          hovermode = "x unified",
+          legend    = list(orientation = "h", y = -0.2)
+        )
     })
 
   })

@@ -16,7 +16,7 @@
 #'
 #' @param id Shiny module id.
 #' @noRd
-#' @importFrom shiny NS tagList selectInput
+#' @importFrom shiny NS tagList selectInput dateRangeInput
 #' @importFrom bslib layout_columns card card_header navset_tab nav_panel
 #' @importFrom plotly plotlyOutput
 mod_spreads_ui <- function(id) {
@@ -37,6 +37,16 @@ mod_spreads_ui <- function(id) {
         "Back contract (C1 minus ...)",
         choices  = as.character(2:12),
         selected = "2"
+      ),
+      shiny::dateRangeInput(
+        ns("date_range"),
+        "Date range",
+        start     = as.Date("2007-01-01"),
+        end       = Sys.Date(),
+        min       = as.Date("2007-01-01"),
+        max       = Sys.Date(),
+        separator = "\u2192",
+        width     = "100%"
       )
     ),
     bslib::card(
@@ -80,6 +90,26 @@ mod_spreads_ui <- function(id) {
           )
         ),
         bslib::nav_panel(
+          "Product Spread (HO \u2013 RB)",
+          plotly::plotlyOutput(ns("ho_rb"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "Heating oil minus RBOB gasoline (both in USD/gallon).
+             Positive = heating oil at a premium (winter demand); negative = gasoline at a premium (summer driving season).
+             Refiners use this spread to decide which product slate to maximise.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
+        ),
+        bslib::nav_panel(
+          "HTT \u2013 CL Basis",
+          plotly::plotlyOutput(ns("htt_cl"), height = "calc(100% - 2.8rem)"),
+          shiny::tags$p(
+            "WTI Houston (HTT) minus WTI Cushing (CL). Reflects the cost of moving crude from Cushing to Gulf Coast refineries.
+             Positive = Houston at a premium (Gulf demand, export strength); negative = Cushing glut or pipeline bottleneck.
+             This basis is directly relevant to Gulf Coast producers and refiners.",
+            style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
+          )
+        ),
+        bslib::nav_panel(
           "Cushing Storage (WTI)",
           plotly::plotlyOutput(ns("cushing"), height = "calc(100% - 2.8rem)"),
           shiny::tags$p(
@@ -112,13 +142,13 @@ mod_spreads_server <- function(id, r) {
 
     # Helper: front-month price series for one market
     front <- function(mkt) {
-      req(!is.null(r$data))
+      req(!is.null(r$data), input$date_range)
       r$data |>
         dplyr::filter(
           market   == mkt,
           contract == 1L,
-          date     >= r$date_range[1],
-          date     <= r$date_range[2]
+          date     >= input$date_range[1],
+          date     <= input$date_range[2]
         ) |>
         dplyr::select(date, value) |>
         dplyr::arrange(date)
@@ -221,18 +251,18 @@ mod_spreads_server <- function(id, r) {
     # Negative = contango (deferred premium) — oversupply / high storage costs.
 
     output$calendar <- plotly::renderPlotly({
-      req(!is.null(r$data))
+      req(!is.null(r$data), input$date_range)
       mkt  <- input$cal_market
       cn   <- as.integer(input$cal_contract_back)
 
       c1_data <- r$data |>
         dplyr::filter(market == mkt, contract == 1L,
-                      date >= r$date_range[1], date <= r$date_range[2]) |>
+                      date >= input$date_range[1], date <= input$date_range[2]) |>
         dplyr::select(date, c1 = value)
 
       cn_data <- r$data |>
         dplyr::filter(market == mkt, contract == cn,
-                      date >= r$date_range[1], date <= r$date_range[2]) |>
+                      date >= input$date_range[1], date <= input$date_range[2]) |>
         dplyr::select(date, cn = value)
 
       cal <- dplyr::inner_join(c1_data, cn_data, by = "date") |>
@@ -273,6 +303,7 @@ mod_spreads_server <- function(id, r) {
       brn <- front("BRN") |> dplyr::rename(brn = value)
       ho  <- front("HO")  |> dplyr::rename(ho  = value)
       rb  <- front("RB")  |> dplyr::rename(rb  = value)
+      htt <- front("HTT") |> dplyr::rename(htt = value)
 
       z_win <- 252L
 
@@ -298,19 +329,27 @@ mod_spreads_server <- function(id, r) {
         dplyr::mutate(hocrack  = ho * 42 - cl)
       rb_crack_df  <- dplyr::inner_join(cl, rb,  by = "date") |>
         dplyr::mutate(rbcrack  = rb * 42 - cl)
+      ho_rb_df     <- dplyr::inner_join(ho, rb,  by = "date") |>
+        dplyr::mutate(horb    = ho - rb)
+      htt_cl_df    <- dplyr::inner_join(htt, cl, by = "date") |>
+        dplyr::mutate(httcl   = htt - cl)
 
       spreads_z <- dplyr::bind_rows(
         compute_z(wti_brent_df, "wtibrent", "WTI\u2013Brent"),
         compute_z(ho_crack_df,  "hocrack",  "HO Crack"),
-        compute_z(rb_crack_df,  "rbcrack",  "RB Crack")
+        compute_z(rb_crack_df,  "rbcrack",  "RB Crack"),
+        compute_z(ho_rb_df,     "horb",     "HO\u2013RB"),
+        compute_z(htt_cl_df,    "httcl",    "HTT\u2013CL")
       )
 
       req(nrow(spreads_z) > 0L)
       x_range <- range(spreads_z$date)
 
       colors <- c("WTI\u2013Brent" = "#2c3e50",
-                  "HO Crack"    = market_colors["HO"] %||% "#2980b9",
-                  "RB Crack"    = market_colors["RB"] %||% "#e67e22")
+                  "HO Crack"    = market_colors["HO"] %||% "#e67e22",
+                  "RB Crack"    = market_colors["RB"] %||% "#8e44ad",
+                  "HO\u2013RB"  = "#f39c12",
+                  "HTT\u2013CL" = "#16a085")
 
       p <- plotly::plot_ly()
       for (nm in unique(spreads_z$name)) {
@@ -344,6 +383,76 @@ mod_spreads_server <- function(id, r) {
           yaxis     = list(title = "Z-Score (\u03c3)"),
           hovermode = "x unified",
           legend    = list(orientation = "h", y = -0.2)
+        )
+    })
+
+    # ----- HO / RB product spread --------------------------------------------
+    # Both in USD/gallon. Positive = HO premium (winter); negative = RB premium (summer).
+
+    output$ho_rb <- plotly::renderPlotly({
+      ho <- front("HO") |> dplyr::rename(ho = value)
+      rb <- front("RB") |> dplyr::rename(rb = value)
+
+      spread <- dplyr::inner_join(ho, rb, by = "date") |>
+        dplyr::mutate(spread = ho - rb)
+
+      plotly::plot_ly(
+        data          = spread,
+        x             = ~date,
+        y             = ~spread,
+        type          = "scatter",
+        mode          = "lines",
+        fill          = "tozeroy",
+        fillcolor      = "rgba(230,126,34,0.15)",
+        line          = list(color = market_colors["HO"] %||% "#e67e22"),
+        hovertemplate = "%{x|%Y-%m-%d}<br>HO\u2013RB: $%{y:.4f}/gal<extra></extra>"
+      ) |>
+        plotly::add_trace(
+          x = range(spread$date), y = c(0, 0),
+          type = "scatter", mode = "lines",
+          line = list(color = "grey", dash = "dot"),
+          showlegend = FALSE
+        ) |>
+        plotly::layout(
+          title  = "HO \u2013 RB Product Spread (USD/gallon)  |  + = HO premium  |  \u2013 = RB premium",
+          xaxis  = list(title = ""),
+          yaxis  = list(title = "Spread (USD/gallon)")
+        )
+    })
+
+    # ----- HTT / CL basis ----------------------------------------------------
+    # WTI Houston minus WTI Cushing. Both in USD/bbl.
+    # Positive = Houston premium (Gulf export demand or pipeline flow south).
+    # Negative = Cushing discount (inland glut, pipeline bottleneck).
+
+    output$htt_cl <- plotly::renderPlotly({
+      htt <- front("HTT") |> dplyr::rename(htt = value)
+      cl  <- front("CL")  |> dplyr::rename(cl  = value)
+
+      spread <- dplyr::inner_join(htt, cl, by = "date") |>
+        dplyr::mutate(spread = htt - cl)
+
+      plotly::plot_ly(
+        data          = spread,
+        x             = ~date,
+        y             = ~spread,
+        type          = "scatter",
+        mode          = "lines",
+        fill          = "tozeroy",
+        fillcolor      = "rgba(44,62,80,0.15)",
+        line          = list(color = market_colors["HTT"] %||% "#2c3e50"),
+        hovertemplate = "%{x|%Y-%m-%d}<br>HTT\u2013CL: $%{y:.2f}/bbl<extra></extra>"
+      ) |>
+        plotly::add_trace(
+          x = range(spread$date), y = c(0, 0),
+          type = "scatter", mode = "lines",
+          line = list(color = "grey", dash = "dot"),
+          showlegend = FALSE
+        ) |>
+        plotly::layout(
+          title  = "HTT \u2013 CL Basis (USD/bbl)  |  + = Houston premium  |  \u2013 = Cushing discount",
+          xaxis  = list(title = ""),
+          yaxis  = list(title = "Basis (USD/bbl)")
         )
     })
 
