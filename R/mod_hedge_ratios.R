@@ -52,10 +52,11 @@ mod_hedge_ratios_ui <- function(id) {
           "Cross-Market Beta",
           plotly::plotlyOutput(ns("cross_beta"), height = "calc(100% - 2.8rem)"),
           shiny::tags$p(
-            "Beta (left axis): minimum-variance hedge ratio estimated on log returns \u2014 units of Market B to hedge 1 unit of A.
-             R\u00b2 (right axis, 0\u20131): fraction of A\u2019s return variance explained by the hedge.
-             Basis risk % (right axis, green): residual vol as a % of total \u2014 the unhedgeable component.
-             Low R\u00b2 + high basis risk = hedge may not work even if beta is stable.",
+            "Beta (left axis): the minimum-variance hedge ratio \u2014 how many contracts of Market B you need to short in order to hedge 1 contract of Market A.
+             A beta of 0.95 means: short 0.95 units of B for every 1 unit of A. If beta drifts over time, your hedge ratio needs to be rebalanced.
+             The minimum-variance approach finds the beta that minimises the residual (unhedged) risk, estimated from rolling log returns to avoid spurious regression on non-stationary price levels.
+             R\u00b2 (right axis, blue dashed, 0\u20131): how much of Market A\u2019s daily variance the hedge actually explains. R\u00b2 of 0.90 means 90% of A\u2019s moves are captured by the hedge; 10% is unhedged basis risk.
+             Basis risk % (right axis, green): the unhedgeable component expressed as a fraction of total volatility. Low R\u00b2 + high basis risk = the hedge is unreliable even if beta is stable.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         ),
@@ -63,8 +64,11 @@ mod_hedge_ratios_ui <- function(id) {
           "Term-Structure Beta (C1 vs Cn)",
           plotly::plotlyOutput(ns("ts_beta"), height = "calc(100% - 2.8rem)"),
           shiny::tags$p(
-            "Rolling OLS beta of C1 on deferred contracts. In backwardation, C1 moves more than Cn so beta > 1;
-             in contango the curve flattens and betas converge toward 1. Used to size calendar spread hedges.",
+            "If you produce or buy crude at today\u2019s spot price (C1) but want to hedge using a longer-dated contract (C2, C3...), you need to know how many deferred contracts to use per unit of front-month exposure.
+             This chart shows that ratio (the beta of C1 on each Cn) estimated on a rolling window of daily log returns.
+             In backwardation, front-month prices move more violently than deferred prices \u2014 so beta > 1, meaning you need more than 1 deferred contract to hedge 1 front-month unit.
+             In contango, the curve is flatter and all contracts move more similarly \u2014 betas converge toward 1.
+             A beta that drifts over time means your hedge ratio needs to be recalculated regularly, not set once and forgotten.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         )

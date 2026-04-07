@@ -52,9 +52,10 @@ mod_volatility_ui <- function(id) {
           "Vol Surface (heatmap)",
           plotly::plotlyOutput(ns("vol_heatmap"), height = "calc(100% - 2.8rem)"),
           shiny::tags$p(
-            "Each cell shows annualised vol for a given contract and date (Mondays only for performance).
-             Near-term contracts (C1–C3) are typically more volatile than deferred contracts;
-             horizontal red bands mark market-wide stress events.",
+            "Each cell shows annualised vol for a given contract and date, sampled weekly (Mondays) to keep the chart responsive.
+             Near-term contracts (C1\u2013C3) are typically more volatile than deferred contracts because nearby prices
+             react more sharply to supply/demand shocks \u2014 deferred prices are anchored by longer-term expectations.
+             Horizontal red bands spanning all contract months mark market-wide stress events.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         ),

@@ -6,7 +6,7 @@ market_colors <- c(
   NG  = "#e74c3c",   # red          – Natural Gas
   HO  = "#e67e22",   # orange       – Heating Oil
   RB  = "#8e44ad",   # purple       – RBOB Gasoline
-  HTT = "#16a085",   # teal         – WTI Houston
+  HTT = "#d35400",   # burnt sienna – WTI Houston
   CMT = "#7f8c8d"    # grey         – US Treasuries
 )
 
@@ -26,7 +26,7 @@ alert_color <- "#c0392b"
 #' @param ... Path components passed to \code{system.file()}.
 #' @noRd
 app_sys <- function(...) {
-  system.file(..., package = "Golem_App_Project")
+  system.file(..., package = "GolemAppProject")
 }
 
 #' Read App Config

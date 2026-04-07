@@ -75,9 +75,11 @@ mod_forward_curve_ui <- function(id) {
           "Roll Yield",
           plotly::plotlyOutput(ns("roll_yield"), height = "calc(100% - 2.8rem)"),
           shiny::tags$p(
-            "Annualised roll yield = (C1/C2 \u2013 1) \u00d7 12. Positive (backwardation) = you earn by rolling forward;
-             negative (contango) = you pay. In steep contango this cost can exceed 2\u20133%/month \u2014
-             material over a year for any hedger maintaining front-month exposure.",
+            "When a futures contract approaches expiry, a hedger must sell it and buy the next month forward \u2014 this is called rolling.
+             In backwardation (nearby price above deferred), rolling earns a positive return: you sell high and buy low.
+             In contango (nearby price below deferred), rolling costs money: you sell low and buy high.
+             In steep contango this drag can exceed 2\u20133% per month \u2014 a hedger holding front-month exposure year-round
+             may lose more to roll cost than they gain from the hedge itself.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         ),
@@ -86,9 +88,11 @@ mod_forward_curve_ui <- function(id) {
           plotly::plotlyOutput(ns("macro_context"), height = "calc(100% - 2.8rem)"),
           shiny::tags$p(
             "US Treasury 2Y\u201310Y yield spread (left axis) vs the selected commodity front-month price (right axis).
-             When the spread goes negative the yield curve is inverted \u2014 historically a leading indicator of
-             recession and demand destruction. The 2008\u20132009 inversion preceded a 70% crude collapse;
-             the 2019\u20132020 inversion preceded COVID demand shock. Use this view to contextualise macro risk.",
+             When the spread goes negative the yield curve is inverted \u2014 historically a leading indicator of recession,
+             typically 12\u201318 months ahead. The 2006\u20132007 inversion preceded the 2008\u20132009 crude collapse from $147 to $32;
+             the 2019 inversion preceded the 2020 COVID demand shock. Note: the indicator can be overwhelmed by supply shocks \u2014
+             the severe 2022\u20132023 inversion did not cause an immediate crude collapse because Russia-Ukraine supply disruption
+             and OPEC+ cuts offset the demand signal. Use this alongside the Fundamentals tab for the full picture.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         )

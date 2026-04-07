@@ -23,10 +23,12 @@ mod_seasonality_ui <- function(id) {
         "Average Monthly Return",
         plotly::plotlyOutput(ns("monthly_avg"), height = "calc(100% - 2.8rem)"),
         shiny::tags$p(
-          "Historical average daily log-return by calendar month. Positive bars = systematically bullish months.
-           NG has two demand peaks (winter heating Nov\u2013Mar; summer power-burn Jun\u2013Sep) but prices
-           typically bottom in March and rise through late summer \u2014 Jan\u2013Feb returns are often negative
-           as winter demand is already priced in. RB rallies Mar\u2013May ahead of the summer driving season.",
+          "Historical average daily log-return by calendar month, computed across all years in the selected date range. Positive bars = months that have been systematically bullish on average.
+           Key patterns: CL and BRN tend to be weakest in Q1 (demand lull after winter) and strongest heading into summer driving season.
+           HO is typically strongest Oct\u2013Dec as heating demand builds ahead of winter, and weakest in spring.
+           NG prices typically bottom in March after the winter draw ends, then rise through late summer as the market prices in the next heating season \u2014 Jan\u2013Feb returns are often negative because winter demand is already priced in well before it arrives.
+           RB tends to rally Mar\u2013May as refiners switch to more expensive summer-spec gasoline and driving demand picks up.
+           Important: these are averages \u2014 any individual year can deviate significantly due to geopolitical events or supply shocks.",
           style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
         )
       ),
@@ -34,8 +36,11 @@ mod_seasonality_ui <- function(id) {
         "Monthly Distribution (box)",
         plotly::plotlyOutput(ns("monthly_box"), height = "calc(100% - 2.8rem)"),
         shiny::tags$p(
-          "Full return distribution by month. Wide box = high dispersion; long tails = tail risk.
-           Compare the median (centre line) to the average bar chart to identify seasonal skew.",
+          "Full return distribution by calendar month. The box spans the 25th\u201375th percentile (the middle half of all observations); the centre line is the median; whiskers extend to the 10th and 90th percentile; dots beyond are outliers.
+           Wide box = high dispersion, the seasonal pattern is unreliable. Narrow box = tight, repeatable pattern.
+           Compare the median (centre line) to the bar chart average: if the average bar is positive but the median line sits near zero,
+           the positive average is being driven by a few extreme years \u2014 not a pattern you can rely on.
+           Long whiskers or outlier dots signal tail risk: individual months can produce very large gains or losses.",
           style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
         )
       ),
@@ -43,8 +48,11 @@ mod_seasonality_ui <- function(id) {
         "Year-over-Year",
         plotly::plotlyOutput(ns("yoy"), height = "calc(100% - 2.8rem)"),
         shiny::tags$p(
-          "Cumulative return for the current year (bold) vs the historical interquartile range (shaded band).
-           Tracking above the IQR by mid-year has historically signalled a strong full-year outcome.",
+          "Cumulative log return for the current calendar year (bold line) vs the historical interquartile range (shaded band) built from all prior years.
+           The band shows where the middle 50% of historical years sat on each day of the year.
+           If the bold line is above the band, this year is outperforming 75% of all historical years at this point in the calendar.
+           If it is below the band, performance is in the bottom 25% historically.
+           This is a descriptive context tool \u2014 it shows where the current year sits relative to history, not a forecast of where it will go.",
           style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
         )
       )

@@ -42,8 +42,9 @@ mod_codynamics_ui <- function(id) {
           "Correlation Matrix",
           plotly::plotlyOutput(ns("corr_matrix"), height = "calc(100% - 2.8rem)"),
           shiny::tags$p(
-            "Dark blue (\u22481) = strong positive correlation; dark red (\u2248\u22121) = strong negative correlation.
-             WTI and Brent typically exceed 0.9; Natural Gas is the most independent market in this set.",
+            "Dark red (\u22481) = strong positive correlation \u2014 markets move together; dark blue (\u2248\u22121) = strong negative correlation \u2014 markets move in opposite directions; white = no relationship.
+             WTI and Brent typically exceed 0.9 \u2014 they are effectively the same market with a basis.
+             Natural Gas is the most independent market in this set: its supply and demand are driven by weather and domestic infrastructure, not OPEC quotas.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         ),
@@ -51,8 +52,10 @@ mod_codynamics_ui <- function(id) {
           "Rolling Correlation (pair)",
           plotly::plotlyOutput(ns("rolling_corr"), height = "calc(100% - 2.8rem)"),
           shiny::tags$p(
-            "When correlation drops sharply, markets are diverging — often a structural shift (e.g. the US export ban
-             lift in 2015 lowered WTI\u2013Brent correlation). The grey line shows the WTI\u2013Brent spread for context.",
+            "When correlation drops sharply, markets are diverging \u2014 often driven by a structural shift or a market-specific shock.
+             For example, the US crude export ban lift in December 2015 allowed WTI to trade freely with global markets,
+             which compressed the WTI\u2013Brent basis and changed how the two markets co-move.
+             The red line (right axis) shows the WTI\u2013Brent spread for reference \u2014 periods of spread widening often coincide with correlation breakdowns.",
             style = "font-size:0.82rem; color:#666; padding:0.2rem 0.6rem; margin:0;"
           )
         ),
