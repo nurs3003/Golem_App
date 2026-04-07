@@ -19,7 +19,7 @@ app_server <- function(input, output, session) {
     date_range       = c(as.Date("2007-01-01"), Sys.Date())
   )
 
-  # Hide the selector bar on Overview and Briefing (no selector effect there)
+  # Hide the selector bar on Overview, Fundamentals, and Spreads (no selector effect there)
   shiny::observeEvent(input$main_tabs, {
     if (isTRUE(input$main_tabs %in% c("Overview", "Fundamentals", "Spreads"))) {
       shinyjs::hide("selector_bar")

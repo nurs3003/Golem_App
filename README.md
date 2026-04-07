@@ -30,14 +30,21 @@ Data is cached as Apache Arrow feather files (`inst/extdata/`) and refreshed aut
 
 ### Option 1 — Docker (no R installation required)
 
+**Intel/AMD (linux/amd64):**
 ```bash
 docker pull ghcr.io/nurs3003/golem_app:latest
 docker run --rm -p 3838:3838 ghcr.io/nurs3003/golem_app:latest
 ```
 
+**Apple Silicon (M1/M2/M3 — arm64):**
+```bash
+docker pull --platform linux/amd64 ghcr.io/nurs3003/golem_app:latest
+docker run --rm --platform linux/amd64 -p 3838:3838 ghcr.io/nurs3003/golem_app:latest
+```
+
 Open `http://localhost:3838` in your browser.
 
-> `ghcr.io` is GitHub Container Registry — the image is built and pushed automatically on every push to `main`. `--rm` removes the container when you stop it so no cleanup is needed.
+> The image is `linux/amd64` only. On Apple Silicon it runs via Rosetta — startup is slightly slower but fully functional. `--rm` removes the container when you stop it so no cleanup is needed.
 
 ### Option 2 — R (development)
 
@@ -71,4 +78,4 @@ app_server.R
 Two GitHub Actions workflows:
 
 - **`data-refresh.yml`** — runs weekdays at 18:00 UTC, installs the latest RTL package, regenerates the feather data files, and commits them back to the repo.
-- **`docker-publish.yml`** — triggers on every push to `main`, builds a multi-platform Docker image (`linux/amd64` + `linux/arm64`) and pushes it to `ghcr.io`.
+- **`docker-publish.yml`** — triggers on every push to `main`, builds a `linux/amd64` Docker image and pushes it to `ghcr.io`.
