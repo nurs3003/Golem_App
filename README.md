@@ -32,14 +32,14 @@ Data is cached as Apache Arrow feather files (`inst/extdata/`) and refreshed aut
 
 **Intel/AMD (linux/amd64):**
 ```bash
-docker pull ghcr.io/nurs3003/golem_app:latest
-docker run --rm -p 3838:3838 ghcr.io/nurs3003/golem_app:latest
+docker pull nurs3003/golem_app:latest
+docker run --rm -p 3838:3838 nurs3003/golem_app:latest
 ```
 
 **Apple Silicon (M1/M2/M3 — arm64):**
 ```bash
-docker pull --platform linux/amd64 ghcr.io/nurs3003/golem_app:latest
-docker run --rm --platform linux/amd64 -p 3838:3838 ghcr.io/nurs3003/golem_app:latest
+docker pull --platform linux/amd64 nurs3003/golem_app:latest
+docker run --rm --platform linux/amd64 -p 3838:3838 nurs3003/golem_app:latest
 ```
 
 Open `http://localhost:3838` in your browser.
@@ -78,4 +78,4 @@ app_server.R
 Two GitHub Actions workflows:
 
 - **`data-refresh.yml`** — runs weekdays at 18:00 UTC, installs the latest RTL package, regenerates the feather data files, and commits them back to the repo.
-- **`docker-publish.yml`** — triggers on every push to `main`, builds a `linux/amd64` Docker image and pushes it to `ghcr.io`.
+- **`docker-publish.yml`** — triggers on every push to `main`, builds a `linux/amd64` Docker image and pushes it to Docker Hub (`nurs3003/golem_app`).
