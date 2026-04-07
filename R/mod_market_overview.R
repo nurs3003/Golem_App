@@ -19,6 +19,8 @@ mod_market_overview_ui <- function(id) {
     shiny::div(id = "briefing_top"),
     # Row 0 — KPI value boxes
     shiny::uiOutput(ns("value_boxes")),
+    # Data freshness indicator
+    shiny::uiOutput(ns("data_as_of")),
     # Row 1 — morning briefing DT
     bslib::card(
       fill  = FALSE,
@@ -415,6 +417,15 @@ mod_market_overview_server <- function(id, r) {
             shiny::p("Ann. 21d vol  \u2014 click to see", class = "mb-0 small opacity-75")
           )
         )
+      )
+    })
+
+    output$data_as_of <- shiny::renderUI({
+      shiny::req(!is.null(r$data))
+      latest <- max(r$data$date, na.rm = TRUE)
+      shiny::div(
+        style = "text-align: right; font-size: 0.78rem; color: #999; margin: -0.4rem 0 0.2rem 0;",
+        paste0("Data as of: ", format(latest, "%B %d, %Y"))
       )
     })
 

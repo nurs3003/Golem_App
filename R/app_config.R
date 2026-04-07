@@ -13,6 +13,34 @@ market_colors <- c(
 # Null-coalescing operator — used across modules for colour fallbacks.
 `%||%` <- function(x, y) if (!is.null(x) && !is.na(x)) x else y
 
+# Key macro events — used to annotate volatility and factor charts.
+# Returns lists of plotly `shapes` and `annotations` for vertical event lines.
+event_vlines <- function(date_range = NULL) {
+  events <- list(
+    list(date = as.Date("2008-09-15"), label = "Lehman Bros."),
+    list(date = as.Date("2020-03-16"), label = "COVID-19"),
+    list(date = as.Date("2022-02-24"), label = "Russia-Ukraine")
+  )
+  if (!is.null(date_range)) {
+    events <- Filter(function(e) e$date >= date_range[1] & e$date <= date_range[2], events)
+  }
+  list(
+    shapes = lapply(events, function(e) {
+      list(type = "line",
+           x0 = as.character(e$date), x1 = as.character(e$date),
+           y0 = 0, y1 = 1, yref = "paper",
+           line = list(color = "rgba(80,80,80,0.30)", dash = "dot", width = 1.2))
+    }),
+    annotations = lapply(events, function(e) {
+      list(x = as.character(e$date), y = 0.97, yref = "paper",
+           text = e$label, showarrow = FALSE,
+           xanchor = "left", yanchor = "top",
+           font = list(size = 9, color = "rgba(80,80,80,0.65)"),
+           textangle = -90)
+    })
+  )
+}
+
 # Alert / reference-line colour — distinct from any market colour.
 # Use this for regime thresholds, ±2σ lines, and other annotations so they
 # don't visually collide with NG's red (#e74c3c).

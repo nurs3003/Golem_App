@@ -171,12 +171,15 @@ mod_volatility_server <- function(id, r) {
         )
       }
 
+      evts <- event_vlines(r$date_range)
       plotly::layout(
         p,
-        xaxis     = list(title = "Date"),
-        yaxis     = list(title = "Annualised Volatility", tickformat = ".0%"),
-        hovermode = "x unified",
-        legend    = list(orientation = "h", y = -0.2)
+        xaxis       = list(title = "Date"),
+        yaxis       = list(title = "Annualised Volatility", tickformat = ".0%"),
+        hovermode   = "x unified",
+        legend      = list(orientation = "h", y = -0.2),
+        shapes      = evts$shapes,
+        annotations = evts$annotations
       )
     })
 
@@ -372,11 +375,14 @@ mod_volatility_server <- function(id, r) {
         )
       }
 
+      evts <- event_vlines(r$date_range)
       plotly::layout(p,
-        xaxis     = list(title = "Date"),
-        yaxis     = list(title = "1-Day VaR (USD per contract)"),
-        hovermode = "x unified",
-        legend    = list(orientation = "h", y = -0.2)
+        xaxis       = list(title = "Date"),
+        yaxis       = list(title = "1-Day VaR (USD per contract)"),
+        hovermode   = "x unified",
+        legend      = list(orientation = "h", y = -0.2),
+        shapes      = evts$shapes,
+        annotations = evts$annotations
       )
     })
 

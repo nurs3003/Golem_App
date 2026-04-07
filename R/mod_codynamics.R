@@ -363,6 +363,7 @@ mod_codynamics_server <- function(id, r) {
       dates  <- res$dates
       scores <- res$pca$x[, 1]   # F1 score per observation
 
+      evts <- event_vlines(r$date_range)
       plotly::plot_ly(
         x    = dates,
         y    = scores,
@@ -372,9 +373,11 @@ mod_codynamics_server <- function(id, r) {
         hovertemplate = "%{x|%Y-%m-%d}<br>F1 score: %{y:.3f}<extra></extra>"
       ) |>
         plotly::layout(
-          title = "F1 Daily Reading — systemic risk barometer across energy markets",
-          xaxis = list(title = "Date"),
-          yaxis = list(title = "F1 score")
+          title       = "F1 Daily Reading — systemic risk barometer across energy markets",
+          xaxis       = list(title = "Date"),
+          yaxis       = list(title = "F1 score"),
+          shapes      = evts$shapes,
+          annotations = evts$annotations
         )
     })
 
