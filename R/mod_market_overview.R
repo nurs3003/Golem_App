@@ -252,7 +252,7 @@ mod_market_overview_server <- function(id, r) {
         best_row  <- ret_df[which.max(ret_df$ret_1d), ]
         best_mkt  <- best_row$market
         best_ret  <- round(best_row$ret_1d, 2)
-        best_val  <- paste0(best_mkt, "  +", best_ret, "%")
+        best_val  <- paste0(best_mkt, "  ", if (!is.na(best_ret) && best_ret >= 0) "+" else "", best_ret, "%")
       } else { best_mkt <- "N/A"; best_val <- "N/A"; best_ret <- NA }
 
       # Top loser
@@ -260,7 +260,7 @@ mod_market_overview_server <- function(id, r) {
         worst_row <- ret_df[which.min(ret_df$ret_1d), ]
         worst_mkt <- worst_row$market
         worst_ret <- round(worst_row$ret_1d, 2)
-        worst_val <- paste0(worst_mkt, "  ", worst_ret, "%")
+        worst_val <- paste0(worst_mkt, "  ", if (!is.na(worst_ret) && worst_ret >= 0) "+" else "", worst_ret, "%")
       } else { worst_mkt <- "N/A"; worst_val <- "N/A"; worst_ret <- NA }
 
       # Average 1D return across selected markets
