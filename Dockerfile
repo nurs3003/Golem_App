@@ -49,3 +49,5 @@ RUN echo 'local(options(shiny.port = 3838, shiny.host = "0.0.0.0"))' \
 EXPOSE 3838
 
 CMD ["R", "-e", "GolemAppProject::run_app()"]
+
+# Should run smoothly. Adding this to check if the github/actions works
