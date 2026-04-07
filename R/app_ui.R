@@ -34,9 +34,74 @@ app_ui <- function(request) {
 golem_add_external_resources <- function() {
   shiny::tags$head(
     shiny::tags$title("Market Dynamics Explorer"),
-    # Allow selectize dropdown to overflow the pinned header bar
-    shiny::tags$style(
-      ".selectize-dropdown { z-index: 9999 !important; }"
-    )
+    shiny::tags$style("
+      /* ── Selectize fix ───────────────────────── */
+      .selectize-dropdown { z-index: 9999 !important; }
+
+      /* ── Navbar ──────────────────────────────── */
+      .navbar {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1030 !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.10) !important;
+      }
+      .navbar-brand { font-weight: 700 !important; letter-spacing: 0.01em; }
+
+      /* ── Cards ───────────────────────────────── */
+      .card {
+        box-shadow: 0 2px 8px rgba(0,0,0,0.07) !important;
+        border: 1px solid rgba(0,0,0,0.08) !important;
+      }
+      .card-header {
+        font-weight: 600 !important;
+        font-size: 0.88rem !important;
+        letter-spacing: 0.02em;
+      }
+
+      /* ── Value boxes ─────────────────────────── */
+      .bslib-value-box {
+        border-radius: 10px !important;
+        transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+      }
+      .bslib-value-box:hover {
+        transform: translateY(-3px) !important;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.13) !important;
+        cursor: default;
+      }
+      .bslib-value-box .value-box-title {
+        font-size: 0.75rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.06em !important;
+        opacity: 0.85;
+      }
+      .bslib-value-box .value-box-value {
+        font-size: 1.35rem !important;
+        font-weight: 700 !important;
+      }
+
+      /* ── Selector bar labels ─────────────────── */
+      #selector_bar .fw-semibold {
+        font-size: 0.75rem !important;
+        letter-spacing: 0.05em !important;
+        text-transform: uppercase !important;
+      }
+
+      /* ── DT table ────────────────────────────── */
+      table.dataTable td, table.dataTable th {
+        font-size: 0.875rem !important;
+        padding: 5px 10px !important;
+      }
+
+      /* ── Tab polish ──────────────────────────── */
+      .nav-tabs .nav-link {
+        font-size: 0.82rem !important;
+        font-weight: 500 !important;
+        letter-spacing: 0.02em;
+      }
+      .nav-tabs .nav-link.active {
+        font-weight: 700 !important;
+      }
+    ")
   )
 }

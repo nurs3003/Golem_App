@@ -23,7 +23,7 @@ mod_forward_curve_ui <- function(id) {
         ns("snapshot_date"),
         "Snapshot Date",
         value = {
-          d <- Sys.Date() - 30L
+          d <- Sys.Date()
           if (weekdays(d) == "Saturday") d <- d - 1L
           if (weekdays(d) == "Sunday")   d <- d - 2L
           d

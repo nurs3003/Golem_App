@@ -8,12 +8,17 @@
 #' @param id Shiny module id.
 #' @noRd
 #' @importFrom shiny NS tagList tags uiOutput div
-#' @importFrom bslib layout_columns card card_header
+#' @importFrom bslib layout_columns card card_header value_box
+#' @importFrom bsicons bs_icon
 #' @importFrom DT DTOutput
 mod_market_overview_ui <- function(id) {
   ns <- NS(id)
   shiny::div(
     style = "padding: 1rem; display: flex; flex-direction: column; gap: 1rem;",
+    # Scroll anchor — "Back to table" buttons on profile cards point here
+    shiny::div(id = "briefing_top"),
+    # Row 0 — KPI value boxes
+    shiny::uiOutput(ns("value_boxes")),
     # Row 1 — morning briefing DT
     bslib::card(
       fill  = FALSE,
@@ -41,7 +46,8 @@ mod_market_overview_ui <- function(id) {
 #' @importFrom slider slide_dbl
 #' @importFrom stats median sd quantile
 #' @importFrom utils tail
-#' @importFrom bslib layout_columns card card_header
+#' @importFrom bslib layout_columns card card_header value_box
+#' @importFrom bsicons bs_icon
 #' @importFrom DT renderDT datatable formatStyle styleInterval styleEqual
 mod_market_overview_server <- function(id, r) {
   moduleServer(id, function(input, output, session) {
@@ -217,6 +223,202 @@ mod_market_overview_server <- function(id, r) {
     all_markets <- c("CL", "BRN", "NG", "HO", "RB", "HTT")
 
     # ---------------------------------------------------------------------------
+    # KPI value boxes — top of Overview page
+    # ---------------------------------------------------------------------------
+    output$value_boxes <- shiny::renderUI({
+      shiny::req(!is.null(r$data))
+
+      # Helper: latest price + 1D return for a market
+      get_info <- function(mkt) {
+        d <- r$data |> dplyr::filter(market == mkt, contract == 1L) |> dplyr::arrange(date)
+        if (nrow(d) < 2L) return(list(price = NA_real_, ret_1d = NA_real_))
+        n       <- nrow(d)
+        latest  <- d$value[n]
+        prev_dt <- d$date[n] - 1L
+        prev_r  <- d[d$date <= prev_dt, ]
+        prev    <- if (nrow(prev_r) > 0L) prev_r$value[nrow(prev_r)] else d$value[n - 1L]
+        list(price = latest, ret_1d = (latest / prev - 1) * 100)
+      }
+
+      # 1D returns for ALL 6 markets in the app (not just selected)
+      ret_df <- dplyr::bind_rows(lapply(all_markets, function(mkt) {
+        info <- get_info(mkt)
+        if (is.na(info$ret_1d)) return(NULL)
+        data.frame(market = mkt, ret_1d = info$ret_1d, stringsAsFactors = FALSE)
+      }))
+
+      # Top gainer
+      if (nrow(ret_df) > 0L) {
+        best_row  <- ret_df[which.max(ret_df$ret_1d), ]
+        best_mkt  <- best_row$market
+        best_ret  <- round(best_row$ret_1d, 2)
+        best_val  <- paste0(best_mkt, "  +", best_ret, "%")
+      } else { best_mkt <- "N/A"; best_val <- "N/A"; best_ret <- NA }
+
+      # Top loser
+      if (nrow(ret_df) > 0L) {
+        worst_row <- ret_df[which.min(ret_df$ret_1d), ]
+        worst_mkt <- worst_row$market
+        worst_ret <- round(worst_row$ret_1d, 2)
+        worst_val <- paste0(worst_mkt, "  ", worst_ret, "%")
+      } else { worst_mkt <- "N/A"; worst_val <- "N/A"; worst_ret <- NA }
+
+      # Average 1D return across selected markets
+      avg_ret   <- if (nrow(ret_df) > 0L) round(mean(ret_df$ret_1d, na.rm = TRUE), 2) else NA
+      avg_val   <- if (!is.na(avg_ret)) paste0(if (avg_ret >= 0) "+" else "", avg_ret, "%") else "N/A"
+      avg_theme <- if (is.na(avg_ret) || avg_ret == 0) "secondary" else if (avg_ret > 0) "success" else "danger"
+      n_up      <- if (nrow(ret_df) > 0L) sum(ret_df$ret_1d > 0, na.rm = TRUE) else 0L
+      n_dn      <- if (nrow(ret_df) > 0L) sum(ret_df$ret_1d < 0, na.rm = TRUE) else 0L
+
+      # CL curve shape
+      c1v <- r$data |> dplyr::filter(market == "CL", contract == 1L) |> dplyr::arrange(date)
+      c2v <- r$data |> dplyr::filter(market == "CL", contract == 2L) |> dplyr::arrange(date)
+      curve_val <- "N/A"; curve_theme <- "secondary"; curve_sub <- "\u2014"
+      if (nrow(c1v) > 0L && nrow(c2v) > 0L) {
+        p1 <- c1v$value[nrow(c1v)]; p2 <- c2v$value[nrow(c2v)]
+        dv <- round(p1 - p2, 2)
+        if (p1 > p2) {
+          curve_val <- "Backwardation"; curve_theme <- "info"
+          curve_sub <- paste0("C1\u2013C2: +$", dv, "/bbl")
+        } else {
+          curve_val <- "Contango"; curve_theme <- "secondary"
+          curve_sub <- paste0("C1\u2013C2: -$", abs(dv), "/bbl")
+        }
+      }
+
+      # Treasury yield curve (2Y-10Y)
+      yc_val <- "N/A"; yc_theme <- "secondary"; yc_sub <- "\u2014"
+      if (!is.null(r$cmt_data) && nrow(r$cmt_data) > 0L) {
+        snap_dt <- max(r$cmt_data$date, na.rm = TRUE)
+        snap    <- r$cmt_data |> dplyr::filter(date == snap_dt)
+        y2  <- snap$value[which.min(abs(snap$maturity_years - 2))]
+        y10 <- snap$value[which.min(abs(snap$maturity_years - 10))]
+        if (length(y2) > 0L && length(y10) > 0L && !is.na(y2[1]) && !is.na(y10[1])) {
+          spr <- round(y10[1] - y2[1], 2)
+          if (spr < 0) {
+            yc_val <- "\u26a0 Inverted"; yc_theme <- "danger"
+            yc_sub <- paste0("2Y\u201310Y: ", spr, "%")
+          } else {
+            yc_val <- "Normal"; yc_theme <- "success"
+            yc_sub <- paste0("2Y\u201310Y: +", spr, "%")
+          }
+        }
+      }
+
+      # Most volatile market right now (21-day annualised vol) — all 6 markets
+      vol_rows <- lapply(all_markets, function(mkt) {
+        d <- r$data |> dplyr::filter(market == mkt, contract == 1L) |> dplyr::arrange(date)
+        if (nrow(d) < 22L) return(NULL)
+        lr  <- diff(log(d$value))
+        vol <- stats::sd(utils::tail(lr, 21L)) * sqrt(252) * 100
+        data.frame(market = mkt, vol = vol)
+      })
+      vol_df      <- dplyr::bind_rows(vol_rows)
+      mv_mkt      <- if (nrow(vol_df) > 0L) vol_df$market[which.max(vol_df$vol)] else "N/A"
+      mv_vol      <- if (nrow(vol_df) > 0L) round(max(vol_df$vol, na.rm = TRUE), 1) else NA
+      mv_val      <- if (!is.na(mv_vol)) paste0(mv_mkt, "  ", mv_vol, "%") else "N/A"
+      mv_sub      <- "Highest 21-day realized vol"
+
+      # Helper: wrap content in a clickable div that navigates to a tab + optional sub-tab.
+      # ... (content) comes FIRST so value_box is never mistaken for a named param.
+      # subtab, add_mkt: optional, must be named at call sites.
+      nav_box <- function(..., tab, subtab = NULL, add_mkt = NULL) {
+        after_js <- ""
+        if (!is.null(subtab)) {
+          after_js <- paste0(
+            "var el=document.querySelector('[data-value=\"", subtab, "\"]');",
+            "if(el)el.click();"
+          )
+        }
+        if (!is.null(add_mkt)) {
+          after_js <- paste0(
+            after_js,
+            "var sel=document.getElementById('selector-markets');",
+            "if(sel&&sel.selectize)sel.selectize.addItem('", add_mkt, "');"
+          )
+        }
+        js <- paste0(
+          "document.querySelector('[data-value=\"", tab, "\"]').click();",
+          if (nchar(after_js) > 0) paste0("setTimeout(function(){", after_js, "},150);") else ""
+        )
+        shiny::div(
+          style   = "cursor: pointer; height: 220px; display: block;",
+          title   = paste0("Go to ", if (!is.null(subtab)) subtab else tab),
+          onclick = js,
+          ...
+        )
+      }
+
+      bslib::layout_columns(
+        col_widths = c(2, 2, 2, 2, 2, 2),
+        fill = FALSE,
+        gap  = "0.6rem",
+        bslib::value_box(
+          title    = "Top Gainer",
+          value    = best_val,
+          showcase = bsicons::bs_icon("arrow-up-circle-fill"),
+          theme    = "success",
+          height   = "220px",
+          shiny::p("1-day return, all markets", class = "mb-0 small")
+        ),
+        bslib::value_box(
+          title    = "Top Loser",
+          value    = worst_val,
+          showcase = bsicons::bs_icon("arrow-down-circle-fill"),
+          theme    = "danger",
+          height   = "220px",
+          shiny::p("1-day return, all markets", class = "mb-0 small")
+        ),
+        bslib::value_box(
+          title    = "Avg Return Today",
+          value    = avg_val,
+          showcase = bsicons::bs_icon("bar-chart-fill"),
+          theme    = avg_theme,
+          height   = "220px",
+          shiny::p(paste0(n_up, " up \u2022 ", n_dn, " down"), class = "mb-0 small"),
+          shiny::p("all markets", class = "mb-0 small opacity-75")
+        ),
+        nav_box(
+          tab    = "Curves", subtab = "Roll Yield",
+          bslib::value_box(
+            title    = "WTI Curve Structure",
+            value    = curve_val,
+            showcase = bsicons::bs_icon("bezier2"),
+            theme    = curve_theme,
+            height   = "100%",
+            shiny::p(curve_sub, class = "mb-0 small"),
+            shiny::p("Front-month vs C2  \u2014 click for curves", class = "mb-0 small opacity-75")
+          )
+        ),
+        nav_box(
+          tab    = "Curves", subtab = "Macro Context",
+          bslib::value_box(
+            title    = "Treasury Yield Curve",
+            value    = yc_val,
+            showcase = bsicons::bs_icon("bank"),
+            theme    = yc_theme,
+            height   = "100%",
+            shiny::p(yc_sub, class = "mb-0 small"),
+            shiny::p("2Y\u201310Y  \u2014 click for macro context", class = "mb-0 small opacity-75")
+          )
+        ),
+        nav_box(
+          tab     = "Volatility", subtab = "Rolling Vol (front month)",
+          add_mkt = mv_mkt,
+          bslib::value_box(
+            title    = "Most Volatile",
+            value    = mv_val,
+            showcase = bsicons::bs_icon("activity"),
+            theme    = "warning",
+            height   = "100%",
+            shiny::p(mv_sub, class = "mb-0 small"),
+            shiny::p("Ann. 21d vol  \u2014 click to see", class = "mb-0 small opacity-75")
+          )
+        )
+      )
+    })
+
+    # ---------------------------------------------------------------------------
     # Morning briefing reactive
     # ---------------------------------------------------------------------------
     briefing_data <- shiny::reactive({
@@ -383,7 +585,14 @@ mod_market_overview_server <- function(id, r) {
             shiny::tags$p(shiny::tags$strong("Risk Management Angle"),
               style = "margin-bottom: 0.25rem; font-size: 0.9rem;"),
             shiny::tags$p(info$risk_angle,
-              style = "font-size: 0.88rem; color: #444; margin-bottom: 0;")
+              style = "font-size: 0.88rem; color: #444; margin-bottom: 0.75rem;"),
+            shiny::tags$a(
+              href    = "javascript:void(0)",
+              onclick = "document.getElementById('briefing_top').scrollIntoView({behavior:'smooth'})",
+              class   = "btn btn-sm btn-outline-secondary",
+              style   = "font-size: 0.78rem;",
+              "\u2191 Back to table"
+            )
           )
         ) # card
         ) # anchor div
