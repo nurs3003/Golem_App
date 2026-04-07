@@ -22,9 +22,15 @@ mod_forward_curve_ui <- function(id) {
       shiny::dateInput(
         ns("snapshot_date"),
         "Snapshot Date",
-        value = Sys.Date() - 30,
-        min   = as.Date("2007-01-01"),
-        max   = Sys.Date()
+        value = {
+          d <- Sys.Date() - 30L
+          if (weekdays(d) == "Saturday") d <- d - 1L
+          if (weekdays(d) == "Sunday")   d <- d - 2L
+          d
+        },
+        min                 = as.Date("2007-01-01"),
+        max                 = Sys.Date(),
+        daysofweekdisabled  = c(0, 6)
       ),
       shiny::checkboxInput(ns("show_history"), "Overlay 2 prior snapshots", TRUE),
       shiny::numericInput(
